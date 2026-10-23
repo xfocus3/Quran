@@ -14,9 +14,22 @@ from unittest.mock import patch
 
 SCRIPT = Path(__file__).resolve().parents[1] / 'device.py'
 sys.path.insert(0, str(SCRIPT.parent))
+from emulator_diagnostics import capture
 
 
 class DeviceFailureTest(unittest.TestCase):
+    def test_lost_adb_preserves_last_successful_boot_snapshot(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            out = Path(tmp)
+            def available(args, **kwargs):
+                return b'fixture' if 'exec-out' in args else 'last useful boot trace\n'
+            with patch('subprocess.check_output', side_effect=available):
+                capture(['adb', '-s', 'emulator-5554'], out, 'latest')
+            with patch('subprocess.check_output', side_effect=subprocess.CalledProcessError(1, 'adb')):
+                capture(['adb', '-s', 'emulator-5554'], out, 'latest')
+            self.assertEqual((out / 'latest-lastanr.txt').read_text(), 'last useful boot trace\n')
+            self.assertIn('CalledProcessError', (out / 'latest-lastanr.error.txt').read_text())
+
     def test_boot_observer_retains_evidence_without_device_tests_and_stops(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

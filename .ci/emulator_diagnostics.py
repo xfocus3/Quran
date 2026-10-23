@@ -1,4 +1,5 @@
 """Bounded private emulator snapshots, shared by boot and device checks."""
+from datetime import datetime, timezone
 import subprocess
 
 
@@ -17,12 +18,16 @@ def capture(adb, out, prefix, stopping=lambda: False):
     for name, args in commands.items():
         if stopping():
             return
+        path = out / f'{prefix}-{name}.txt'
         try:
             value = subprocess.check_output([*adb, *args], text=True,
                                             stderr=subprocess.STDOUT, timeout=8)
         except Exception as error:
-            value = f'Diagnostic unavailable: {type(error).__name__}\n'
-        path = out / f'{prefix}-{name}.txt'
+            # Teardown can race the next sample. Keep the last successful bytes
+            # rather than replacing the evidence with an availability message.
+            path = path.with_suffix('.error.txt')
+            value = (f'{datetime.now(timezone.utc).isoformat()}: Diagnostic unavailable: '
+                     f'{type(error).__name__}; existing snapshot left unchanged.\n')
         temporary = path.with_suffix('.tmp')
         temporary.write_text(value)
         temporary.replace(path)
