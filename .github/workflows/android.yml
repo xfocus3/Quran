@@ -54,6 +54,7 @@ jobs:
           target: google_apis
           arch: x86_64
           avd-name: quran-ci
+          emulator-port: 5554
           profile: pixel_7_pro
           cores: 4
           ram-size: 4096M
@@ -71,7 +72,10 @@ jobs:
         run: |
           mkdir -p .ci/out .ci/upload
           test -n "$QURAN_CI_KEY"
+          observer_status=0
+          python .ci/watch_emulator.py --stop || observer_status=$?
           python .ci/vault.py seal .ci/out .ci/upload/android-${{ matrix.api }}.enc
+          exit "$observer_status"
       - name: Retain encrypted results for local review
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4

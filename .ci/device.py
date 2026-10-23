@@ -8,6 +8,7 @@ import subprocess
 import sys
 import time
 import traceback
+from emulator_diagnostics import capture
 
 OUT = Path('.ci/out/device')
 OUT.mkdir(parents=True, exist_ok=True)
@@ -25,27 +26,7 @@ def diagnostics(stage):
     """Best-effort bounded private evidence; never replace the original failure."""
     if adb is None:
         return
-    commands = {
-        'logcat': ['logcat', '-d', '-b', 'all', '-t', '3000'],
-        'lastanr': ['shell', 'dumpsys', 'activity', 'lastanr'],
-        'anr-traces': ['shell', 'dumpsys activity lastanr-traces | head -c 2097152'],
-        'cpu': ['shell', 'dumpsys', 'cpuinfo'],
-        'memory': ['shell', 'cat', '/proc/meminfo'],
-        'window': ['shell', 'dumpsys', 'window', 'displays'],
-        'properties': ['shell', 'getprop'],
-        'input': ['shell', 'getevent', '-pl'],
-    }
-    for name, args in commands.items():
-        try:
-            value = run(*adb, *args, timeout=15)
-        except Exception as error:
-            value = f'Diagnostic unavailable: {type(error).__name__}\n'
-        (OUT / f'{stage}-{name}.txt').write_text(value)
-    try:
-        image = subprocess.check_output([*adb, 'exec-out', 'screencap', '-p'], timeout=15)
-        (OUT / f'{stage}-screen.png').write_bytes(image)
-    except Exception:
-        pass
+    capture(adb, OUT, stage)
 
 
 def require_healthy_android(stage):
@@ -61,6 +42,7 @@ def require_healthy_android(stage):
 
 def main():
     global adb
+    (OUT / 'boot-watch.stop').touch()
     devices = [line.split()[0] for line in run('adb', 'devices').splitlines()[1:]
                if '\tdevice' in line]
     if len(devices) != 1 or not devices[0].startswith('emulator-'):
@@ -139,8 +121,12 @@ try:
 except BaseException:
     result['error'] = traceback.format_exc()
 finally:
-    diagnostics('final')
+    # Persist the primary outcome before any best-effort diagnostic I/O.
     (OUT / 'device-result.json').write_text(json.dumps(result, indent=2) + '\n')
+    try:
+        diagnostics('final')
+    except Exception:
+        print('::warning::Some private emulator diagnostics could not be retained')
 if not result['passed']:
     print('::error::Device checks failed; inspect encrypted device-result.json')
     sys.exit(1)
