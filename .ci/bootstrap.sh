@@ -15,6 +15,12 @@ echo "$flutter_dir/bin" >> "$GITHUB_PATH"
 export PATH="$flutter_dir/bin:$PATH"
 flutter config --no-analytics
 flutter --version
+sdk_root="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-/usr/local/lib/android/sdk}}"
+sdk_tools="$sdk_root/cmdline-tools/latest/bin"
+test -x "$sdk_tools/sdkmanager"
+export PATH="$sdk_tools:$sdk_root/platform-tools:$PATH"
+echo "$sdk_tools" >> "$GITHUB_PATH"
+echo "$sdk_root/platform-tools" >> "$GITHUB_PATH"
 yes | sdkmanager --licenses >/dev/null || true
 sdkmanager 'platforms;android-36' 'build-tools;36.0.0' 'platform-tools'
 python3 -m venv "$RUNNER_TEMP/quran-ci-venv"
