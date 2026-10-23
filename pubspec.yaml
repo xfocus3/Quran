@@ -1,0 +1,38 @@
+name: compatibility
+description: "Offline Quran reader and ayah navigation for PRD phase 2."
+publish_to: 'none'
+version: 0.1.0
+
+environment:
+  sdk: ^3.10.4
+
+dependencies:
+  crypto: 3.0.6
+  flutter_svg: 2.2.3
+  flutter:
+    sdk: flutter
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^6.0.0
+
+flutter:
+  uses-material-design: true
+  assets:
+    - .local/reader/
+    - .local/handoff/app/quran.json
+    - .local/handoff/app/arabic-three-tafsirs.sqlite
+    - .local/handoff/tafsir/ATTRIBUTION.txt
+    - .local/handoff/tafsir/LICENSE-DATA.txt
+    - .local/handoff/tafsir/SOURCE-DATA-NOTICE.txt
+    - .local/handoff/tafsir/READ-FIRST.txt
+  fonts:
+    - family: madina2
+      fonts:
+        - asset: .local/handoff/app/UthmanicHafs1_Ver16.ttf
+    - family: inter
+      fonts:
+        - asset: .local/reader/Inter-Regular.ttf
+        - asset: .local/reader/Inter-SemiBold.ttf
+          weight: 600

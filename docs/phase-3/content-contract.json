@@ -1,0 +1,15 @@
+{
+  "schema_version": 1,
+  "pack_sha256": "2422b6e57acb21184e14c15a86b36b23e58a140c78e3e7a17b45863524fb9150",
+  "pack_bytes": 100519936,
+  "book": "ibn_kathir",
+  "entries": 6236,
+  "canonical_row_sha256": "9ccd21c5706542735f5c2927d9415160b1e638508cab6ce34c52f06e30c8b54e",
+  "framing": "Ordered surah,ayah; big-endian uint32 surah + uint32 ayah + uint64 UTF-8 byte length + exact UTF-8 text",
+  "samples": [
+    {"surah": 1, "ayah": 1, "characters": 131238, "sha256": "2482e89fb073e6f66d4d12272a56f7f7111189e96aebcdb052395d43405222f3"},
+    {"surah": 20, "ayah": 125, "characters": 14, "sha256": "92759f6ed634491a8372df7faa8650e58653722aa56a2f549636371bd18c2ff0"},
+    {"surah": 114, "ayah": 6, "characters": 2602, "sha256": "c6fff5604e01734c193c92f51cbd42090e25a227f530c576c2a2ad634b3140b4"}
+  ],
+  "provenance": "Retained acquired manifest and independent parent lookup-contract.json; not generated from the app adapter"
+}

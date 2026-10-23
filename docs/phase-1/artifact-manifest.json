@@ -1,0 +1,202 @@
+{
+  "schema_version": 1,
+  "reference_build": "Quranly Android 3.0.76",
+  "files": [
+    {
+      "path": "base.apk",
+      "sha256": "13e80282bc3166b07fb66a6c9b8c77bea5c19d9364e6f20da1858d844f395790",
+      "role": "shipped APK"
+    },
+    {
+      "path": "split_config.arm64_v8a.apk",
+      "sha256": "525f74cff08e7a719a94c5f8571f981ddeb59913b1f7f4707daa0ccc9d1344ad",
+      "role": "Flutter native split"
+    },
+    {
+      "path": "rea-artifact-base.json",
+      "sha256": "894560c1c35cf4aa93b3c697ed7ee1549c7c3df2861320df36b98be7b7fe26e7",
+      "role": "canonical static REA Evidence",
+      "destination": "evidence/rea-artifact-base.json",
+      "evidence_id": "ev_e2c9f833c58d05b71adfa47c8b84444a42a4d72ddfdd5da7606e18ff0254420e"
+    },
+    {
+      "path": "rea-flutter-build.json",
+      "sha256": "8e091dcf6e11c6e15e5d41e293fbaa9d996f0d4a0abdd71bbbac6701e2a201b6",
+      "role": "canonical static REA Evidence",
+      "destination": "evidence/rea-flutter-build.json",
+      "evidence_id": "ev_88530d1f125dc65b5900d73c3c4ad0258e2b8398cc74eccc6818196a00211455"
+    },
+    {
+      "path": "rea-dart-aot.json",
+      "sha256": "b96dbaa80bde62157eb7b85f0fd421c7afc92b8938eae59cbc4a9fda6c8f8785",
+      "role": "canonical static REA Evidence",
+      "destination": "evidence/rea-dart-aot.json",
+      "evidence_id": "ev_33201e14dfb1e56d9729d673fddc8578cda78e6fa80df6ebd4e17d375a97f882"
+    },
+    {
+      "path": "rea-offlinedb-schema-node24.json",
+      "sha256": "abed44420c4fae070444932deb42cc9540aad16699758e8343252362362c72c9",
+      "role": "canonical static REA Evidence",
+      "destination": "evidence/rea-offlinedb-schema-node24.json",
+      "evidence_id": "ev_ab1be88ce5df23b094ae831e1562b1a164d3188fe6efdfa6e126d8421c8e173a"
+    },
+    {
+      "path": "rea-widget-update-method.json",
+      "sha256": "e52d77a392f1908a3d97b45dc62812d2582251049be9068a21ab47aa84961623",
+      "role": "canonical static REA Evidence",
+      "destination": "evidence/rea-widget-update-method.json",
+      "evidence_id": "ev_a08218a2be518856261f2b3f19e14126908b7ffb9ee8a4b47aa42b233ce5d8f9"
+    },
+    {
+      "path": "tafseer-followup/arabic-three/manifest.json",
+      "sha256": "2484952f07642a6f4baae602b1ba8ddc58ed2e5ce2435d95679cfd6c35cb8c44",
+      "role": "tafsir provenance/context",
+      "destination": "tafsir/manifest.json"
+    },
+    {
+      "path": "tafseer-followup/arabic-three/ATTRIBUTION.txt",
+      "sha256": "ccd380c03a7166efad3b10c27bfe181d3e6fc6e8b214f14c1824e5951ee9eeb9",
+      "role": "tafsir provenance/context",
+      "destination": "tafsir/ATTRIBUTION.txt"
+    },
+    {
+      "path": "tafseer-followup/arabic-three/LICENSE-DATA.txt",
+      "sha256": "b286b84fe98f8dc422bbaabd0d10e8b03e4152bd63720b3f84728affc6efd9cb",
+      "role": "tafsir provenance/context",
+      "destination": "tafsir/LICENSE-DATA.txt"
+    },
+    {
+      "path": "tafseer-followup/arabic-three/SOURCE-DATA-NOTICE.txt",
+      "sha256": "9545c1bbe41e0374c91645a672847736e066b224b2ff64b43b6d7864f831072e",
+      "role": "tafsir provenance/context",
+      "destination": "tafsir/SOURCE-DATA-NOTICE.txt"
+    },
+    {
+      "path": "tafseer-followup/arabic-three/READ-FIRST.txt",
+      "sha256": "e0b64da82428bf6c98b876c5e1fe66746017459aeed02e9f60ec24f9fdd4f0a7",
+      "role": "tafsir provenance/context",
+      "destination": "tafsir/READ-FIRST.txt"
+    },
+    {
+      "path": "tafseer-followup/arabic-three/tabary-context-ranges.json",
+      "sha256": "6ebe2612e921e548630f5c67fa06cfb12ee7367d1b9e838ac7c811a5fa2f1844",
+      "role": "tafsir provenance/context",
+      "destination": "tafsir/tabary-context-ranges.json"
+    },
+    {
+      "path": "tafseer-followup/arabic-three/offline-pack-receipt.json",
+      "sha256": "a68cf71a1b38161224b33738a9ac888e5cb11884dd68b7f6248822dd48b8e108",
+      "role": "tafsir provenance/context",
+      "destination": "tafsir/offline-pack-receipt.json"
+    },
+    {
+      "path": "tafseer-followup/arabic-three/source/acquisition.json",
+      "sha256": "703ee37b21d9444c66ef00f3b814beb7f2d6cab08a062c0b7659d56f225a80f9",
+      "role": "tafsir provenance/context",
+      "destination": "tafsir/source/acquisition.json"
+    },
+    {
+      "path": "tafseer-followup/arabic-three/source/secondary-README.txt",
+      "sha256": "4b59c60857217d238672fa76ac5e2e0d5d9baad677611ba05d03f5c575d6f39b",
+      "role": "tafsir provenance/context",
+      "destination": "tafsir/source/secondary-README.txt"
+    },
+    {
+      "path": "tafseer-followup/arabic-three/rea-source-schema.json",
+      "sha256": "48782f2a63be078aac9496da5dde82e9f38bc6fa0c5ef8ce2e0b8039c9d7a65d",
+      "role": "tafsir provenance/context",
+      "destination": "tafsir/rea-source-schema.json",
+      "evidence_id": "ev_0058c5959407d29bfc76d4bc30b4133db74274bf753ffffade2ca4e64ba4731c"
+    },
+    {
+      "path": "tafseer-followup/arabic-three/rea-offline-all-identities.json",
+      "sha256": "d4fc81e6a4b2dca185a33e15ff5b369b3d1e3e475a5d23faa39cf0fbba52d8f4",
+      "role": "tafsir provenance/context",
+      "destination": "tafsir/rea-offline-all-identities.json",
+      "evidence_id": "ev_7f71e4ab579429288cd89da3b06e9023234e9ed83c5af381ab085a94014f3bdd"
+    },
+    {
+      "path": "tafseer-followup/arabic-three/rea-offline-context-ranges.json",
+      "sha256": "90ade232cdbc2cda98adfb681d83d0bae4b314549143436e5f3ea7de406bba69",
+      "role": "tafsir provenance/context",
+      "destination": "tafsir/rea-offline-context-ranges.json",
+      "evidence_id": "ev_ae5528d9a49d8a06c5ac81707af851205916a731f49811d35d94847659158312"
+    },
+    {
+      "path": "tafseer-followup/arabic-three/arabic-three-tafsirs.sqlite",
+      "sha256": "2422b6e57acb21184e14c15a86b36b23e58a140c78e3e7a17b45863524fb9150",
+      "role": "verified existing tafsir pack"
+    },
+    {
+      "path": "content-followup/rea-surah-all.json",
+      "sha256": "1c678bd3be55900c29056aef5e6a0f1a2909590a3eabc38aa28aac195b011031",
+      "role": "canonical static REA Evidence",
+      "destination": "inventory/content-followup/rea-surah-all.json",
+      "evidence_id": "ev_a3a74426395fc99216fac2ea5bd2beafc0db0fa830a484d3bd5057db94824cce"
+    },
+    {
+      "path": "content-followup/rea-arabic-madina-all.json",
+      "sha256": "a158599ea743b4829fa55ea311e742c3141b69ff5e286b4c6056919a03c5be1f",
+      "role": "canonical static REA Evidence",
+      "destination": "inventory/content-followup/rea-arabic-madina-all.json",
+      "evidence_id": "ev_d7735990feddf7339c221ef32c3bd9d83a0b5fd17cba54eb4257959fb3b44923"
+    },
+    {
+      "path": "content-followup/rea-quran-identifiers.json",
+      "sha256": "342ed48e98914a4599e7a0345ee9460035d7f95a51db9dd3f00124ac4a8c0542",
+      "role": "canonical static REA Evidence",
+      "destination": "inventory/content-followup/rea-quran-identifiers.json",
+      "evidence_id": "ev_6b239f17b969d9a64ae29a712295ede8985eb1326c5241deabedc16a5a682b9b"
+    },
+    {
+      "path": "native-followup/findings.json",
+      "sha256": "b5be43c6ca0614ea59fa671ee62076050083cd60b25218ec325f1b40b17347de",
+      "role": "analyst-derived inventory (not REA Evidence)",
+      "destination": "inventory/native-followup/findings.json"
+    },
+    {
+      "path": "derived-application-map.json",
+      "sha256": "39cf4b038edc0ec0c91cb9f1e178fb0e84086569835514a35fad1e8db6f57d45",
+      "role": "analyst-derived inventory (not REA Evidence)",
+      "destination": "inventory/derived-application-map.json"
+    },
+    {
+      "path": "content-followup/content-summary.json",
+      "sha256": "78c28c7c6766e4bfee8c6fb1f1a5899340b519862d4d1d421de1bb31f7197f66",
+      "role": "analyst-derived inventory (not REA Evidence)",
+      "destination": "inventory/content-followup/content-summary.json"
+    }
+  ],
+  "members": [
+    {
+      "archive": "base.apk",
+      "member": "assets/flutter_assets/assets/offlinedb.db",
+      "sha256": "5f1e9cc30779a2a4b749de2f8bd4548b4fd7ca09a23457a44e6fea878bbc5dec",
+      "destination": "source/offlinedb.db"
+    },
+    {
+      "archive": "base.apk",
+      "member": "assets/flutter_assets/FontManifest.json",
+      "sha256": "d25d6c5e0055b571cc6280ff5e1291325642f465fba709d66aa5501ae2accdb1",
+      "destination": "source/FontManifest.json"
+    },
+    {
+      "archive": "base.apk",
+      "member": "assets/flutter_assets/assets/UthmanicHafs1_Ver16.ttf",
+      "sha256": "b7713e2da7daec35c9bd99076bcc40e59310d5ecb88055aaa718fbc647015bf2",
+      "destination": "app/UthmanicHafs1_Ver16.ttf"
+    },
+    {
+      "archive": "base.apk",
+      "member": "assets/flutter_assets/assets/mishaf/QCF_P001.ttf",
+      "sha256": "85099681c9a6e4aba8ad01885c212ba3af724c002cf5bb65d82afc5da8024623",
+      "destination": "source/QCF_P001.ttf"
+    },
+    {
+      "archive": "base.apk",
+      "member": "assets/flutter_assets/assets/mushafspec/1.json",
+      "sha256": "6305fea8353f4d0bc04ed70d86f1b73abd5fd53d8d12b5a4e4096b535fd9584b",
+      "destination": "source/page-1.json"
+    }
+  ]
+}

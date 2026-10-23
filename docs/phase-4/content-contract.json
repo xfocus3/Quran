@@ -1,0 +1,266 @@
+{
+  "pack_sha256": "2422b6e57acb21184e14c15a86b36b23e58a140c78e3e7a17b45863524fb9150",
+  "framing": "ordered surah,ayah; uint32be surah,uint32be ayah,uint64be UTF8 length,raw UTF8 bytes",
+  "books": {
+    "al_saadi": {
+      "title": "تيسير الكريم الرحمن في تفسير كلام المنان — السعدي",
+      "count": 6236,
+      "raw_rows_sha256": "f6eeb49365b3fad1342b06b126da643f734a1439ef7109b9ac5a94e59edf4377",
+      "longest": [
+        12,
+        111,
+        18983
+      ]
+    },
+    "al_tabari": {
+      "title": "جامع البيان عن تأويل آي القرآن — الطبري",
+      "count": 6236,
+      "raw_rows_sha256": "499f32e52e1f90d5c01e003b99926ecc18b8fbe5eb730de8837ad6bdcaef46ee",
+      "longest": [
+        2,
+        196,
+        169857
+      ]
+    },
+    "ibn_kathir": {
+      "title": "تفسير القرآن العظيم — ابن كثير",
+      "count": 6236,
+      "raw_rows_sha256": "9ccd21c5706542735f5c2927d9415160b1e638508cab6ce34c52f06e30c8b54e",
+      "longest": [
+        1,
+        1,
+        131238
+      ]
+    }
+  },
+  "contexts": [
+    {
+      "book": "al_tabari",
+      "surah": 4,
+      "selected": 168,
+      "from": 168,
+      "to": 169,
+      "heading": 169,
+      "basis": "Source-derived numbered passage heading in neighboring row; context, not a replacement standalone verse commentary",
+      "heading_sha256": "f2162786a1103ba03bada8fb199adee17e3d1b275e3eeb5c034b17ca4a73df21",
+      "source_rows": [
+        {
+          "ayah": 168,
+          "status": "empty_markup",
+          "characters": 4,
+          "sha256": "65aef1adba8672a5fe7932d9f9f0dc35c2435893f65112acac628d2dc17a0bcf"
+        },
+        {
+          "ayah": 169,
+          "status": "source_text",
+          "characters": 1667,
+          "sha256": "267c3f0c1508aa69a6528163432aea48e11696646afae02dfef6f88d88e22f45"
+        }
+      ]
+    },
+    {
+      "book": "al_tabari",
+      "surah": 26,
+      "selected": 16,
+      "from": 15,
+      "to": 17,
+      "heading": 15,
+      "basis": "Source-derived numbered passage heading in neighboring row; context, not a replacement standalone verse commentary",
+      "heading_sha256": "e48439c118c53708d91ba77cc2f90d29c02ef87ba9080c4518e464614ed1e7ff",
+      "source_rows": [
+        {
+          "ayah": 15,
+          "status": "source_text",
+          "characters": 480,
+          "sha256": "a5e68d82fc80a804682ad725c2e8060ec5e7696f2e3a6aed0de3fb0184a14eca"
+        },
+        {
+          "ayah": 16,
+          "status": "empty_markup",
+          "characters": 4,
+          "sha256": "65aef1adba8672a5fe7932d9f9f0dc35c2435893f65112acac628d2dc17a0bcf"
+        },
+        {
+          "ayah": 17,
+          "status": "source_text",
+          "characters": 854,
+          "sha256": "a1060dd8a550e7a1d8135d886826646d3ecffe29ce0223f8952dfdacd5371be1"
+        }
+      ]
+    },
+    {
+      "book": "al_tabari",
+      "surah": 26,
+      "selected": 205,
+      "from": 205,
+      "to": 207,
+      "heading": 206,
+      "basis": "Source-derived numbered passage heading in neighboring row; context, not a replacement standalone verse commentary",
+      "heading_sha256": "3d91d9e225d5fd9142c682650e1ab075d39e5e8d19a6960ccf8933d9529224ad",
+      "source_rows": [
+        {
+          "ayah": 205,
+          "status": "empty_markup",
+          "characters": 4,
+          "sha256": "65aef1adba8672a5fe7932d9f9f0dc35c2435893f65112acac628d2dc17a0bcf"
+        },
+        {
+          "ayah": 206,
+          "status": "source_text",
+          "characters": 285,
+          "sha256": "985eb8756cf39a2bb7414ef213c732d0ab639f1c97d4b8e1bc54eb54b2cbf335"
+        },
+        {
+          "ayah": 207,
+          "status": "source_text",
+          "characters": 630,
+          "sha256": "8eef8659082d29fb97f82ede96e6ba28febe028841dd95049e05d4b03ec48c0a"
+        }
+      ]
+    },
+    {
+      "book": "al_tabari",
+      "surah": 37,
+      "selected": 25,
+      "from": 24,
+      "to": 27,
+      "heading": 24,
+      "basis": "Source-derived numbered passage heading in neighboring row; context, not a replacement standalone verse commentary",
+      "heading_sha256": "a899bf7580bd6c51151c185cdf53fd3c1aa4ee1a48557e04d33a9c0761ae467a",
+      "source_rows": [
+        {
+          "ayah": 24,
+          "status": "source_text",
+          "characters": 2100,
+          "sha256": "4940bc168482d24c935f7178f43dee481045bcf7d93f9ec37bd43ce3a8b21f53"
+        },
+        {
+          "ayah": 25,
+          "status": "empty_markup",
+          "characters": 4,
+          "sha256": "65aef1adba8672a5fe7932d9f9f0dc35c2435893f65112acac628d2dc17a0bcf"
+        },
+        {
+          "ayah": 26,
+          "status": "source_text",
+          "characters": 666,
+          "sha256": "259d8df43c987d9a46348aea6326176f18393418b5840b20dcd28815abbdc329"
+        },
+        {
+          "ayah": 27,
+          "status": "source_text",
+          "characters": 308,
+          "sha256": "26a39fba11d8d2a05594855194861dbac2c0cdd2a484f36f02894825272b21d0"
+        }
+      ]
+    },
+    {
+      "book": "al_tabari",
+      "surah": 37,
+      "selected": 62,
+      "from": 62,
+      "to": 66,
+      "heading": 63,
+      "basis": "Source-derived numbered passage heading in neighboring row; context, not a replacement standalone verse commentary",
+      "heading_sha256": "f4eabb15092f60b9ac867b446f14dadd6a49d4e22560da7b26606982c23c5de2",
+      "source_rows": [
+        {
+          "ayah": 62,
+          "status": "empty_markup",
+          "characters": 4,
+          "sha256": "65aef1adba8672a5fe7932d9f9f0dc35c2435893f65112acac628d2dc17a0bcf"
+        },
+        {
+          "ayah": 63,
+          "status": "source_text",
+          "characters": 752,
+          "sha256": "2a7a78f7e681de55bdd0cad523a92f5b94f07d3bd5f642f5064c9df19abf8f3f"
+        },
+        {
+          "ayah": 64,
+          "status": "source_text",
+          "characters": 1601,
+          "sha256": "e858edc8f68f4d731906fc8ae68ce3402653c0bbb7e1638ac166701240990cc4"
+        },
+        {
+          "ayah": 65,
+          "status": "source_text",
+          "characters": 2010,
+          "sha256": "1358da400bceebeb31942384f318b343fbeea68c9998436fb9331634306053ea"
+        },
+        {
+          "ayah": 66,
+          "status": "source_text",
+          "characters": 346,
+          "sha256": "abe672ea8ef18cd62aff4698f7055f45e35c24c9da898dce2b36ec01b1ea4720"
+        }
+      ]
+    },
+    {
+      "book": "al_tabari",
+      "surah": 37,
+      "selected": 103,
+      "from": 103,
+      "to": 106,
+      "heading": 104,
+      "basis": "Source-derived numbered passage heading in neighboring row; context, not a replacement standalone verse commentary",
+      "heading_sha256": "6b8feb431d2b220058569357b37cb2a2ab31cc92aa9920a45098b64659c21d2d",
+      "source_rows": [
+        {
+          "ayah": 103,
+          "status": "empty_markup",
+          "characters": 4,
+          "sha256": "65aef1adba8672a5fe7932d9f9f0dc35c2435893f65112acac628d2dc17a0bcf"
+        },
+        {
+          "ayah": 104,
+          "status": "source_text",
+          "characters": 4708,
+          "sha256": "afb984896b7e2a4076ccc2b52fbcefa8e4f5eab8c7e849d4f0eee0f8d8b4bacf"
+        },
+        {
+          "ayah": 105,
+          "status": "source_text",
+          "characters": 643,
+          "sha256": "c0664c1e7d0a167ebacd7a0bb413163b2e3773b49b2cc60c8b59727b678772a4"
+        },
+        {
+          "ayah": 106,
+          "status": "source_text",
+          "characters": 627,
+          "sha256": "84054680cfbeedd14121e0f98ddd62e0339b43df284ba248346831cb9c8b45ed"
+        }
+      ]
+    },
+    {
+      "book": "al_tabari",
+      "surah": 50,
+      "selected": 13,
+      "from": 12,
+      "to": 14,
+      "heading": 12,
+      "basis": "Source-derived numbered passage heading in neighboring row; context, not a replacement standalone verse commentary",
+      "heading_sha256": "1a49ffee449653c11788defc94da1751f3ef244c6904dbf5d75ae2ffcf2f0e4a",
+      "source_rows": [
+        {
+          "ayah": 12,
+          "status": "source_text",
+          "characters": 1247,
+          "sha256": "9c61e471925d4885978fdc3ee6e6decd4c4900fd3f5fa649ee7304e18153dabc"
+        },
+        {
+          "ayah": 13,
+          "status": "empty_markup",
+          "characters": 4,
+          "sha256": "65aef1adba8672a5fe7932d9f9f0dc35c2435893f65112acac628d2dc17a0bcf"
+        },
+        {
+          "ayah": 14,
+          "status": "source_text",
+          "characters": 6026,
+          "sha256": "767e3366cccf492d0e34dc6f65c1c0520c45e5e4ba6c2b19b0b174e4da0dd60d"
+        }
+      ]
+    }
+  ]
+}

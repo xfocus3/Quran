@@ -1,0 +1,79 @@
+name: Android verification
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: android-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  android:
+    if: github.repository == 'xfocus3/Quran' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        api: [35, 36]
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3 # v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Prepare hosted toolchains
+        run: bash .ci/bootstrap.sh
+      - name: Download and authenticate private build inputs
+        env:
+          QURAN_CI_KEY: ${{ secrets.QURAN_CI_KEY }}
+        run: |
+          test -n "$QURAN_CI_KEY"
+          python - <<'PY'
+          import hashlib, json, pathlib, urllib.request
+          item = json.loads(pathlib.Path('.ci/inputs.json').read_text())
+          path = pathlib.Path('/tmp/quran-inputs.enc')
+          urllib.request.urlretrieve(item['url'], path)
+          assert hashlib.sha256(path.read_bytes()).hexdigest() == item['archive_sha256'], 'Encrypted input identity differs'
+          PY
+          python .ci/vault.py open /tmp/quran-inputs.enc /tmp/quran-inputs
+          mv /tmp/quran-inputs/.local .local
+          rm /tmp/quran-inputs.enc
+      - name: Analyze, test and build
+        run: bash .ci/build.sh
+      - name: Enable hosted KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+      - name: Android production contracts and accessibility
+        uses: reactivecircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d # v2
+        with:
+          api-level: ${{ matrix.api }}
+          target: google_apis
+          arch: x86_64
+          profile: pixel_7_pro
+          ram-size: 4096M
+          heap-size: 512M
+          disk-size: 4G
+          disable-animations: true
+          emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim -camera-back none -camera-front none -writable-system
+          script: python .ci/device.py
+      - name: Encrypt build outputs and device evidence
+        if: always()
+        env:
+          QURAN_CI_KEY: ${{ secrets.QURAN_CI_KEY }}
+        run: |
+          mkdir -p .ci/out .ci/upload
+          test -n "$QURAN_CI_KEY"
+          python .ci/vault.py seal .ci/out .ci/upload/android-${{ matrix.api }}.enc
+      - name: Retain encrypted results for local review
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: android-${{ matrix.api }}-${{ github.sha }}
+          path: .ci/upload/*.enc
+          if-no-files-found: error
+          retention-days: 1
+          compression-level: 0
