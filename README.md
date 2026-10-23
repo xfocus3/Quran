@@ -24,6 +24,12 @@ device evidence. Artifacts expire after one day and no dependency or emulator
 state cache is uploaded. The builds use disposable debug signing; final release
 signing and owner comparison remain separate checkpoints.
 
+Each guest completes image provisioning and reboots once before APK installation.
+First-boot diagnostics are retained, and the distinct test boot must have no ANR
+at startup or after TalkBack. Application checks are never retried into a pass.
+The small encrypted `device-*` artifact is uploaded before the larger encrypted
+`android-*` APK archive so failures can be inspected sooner.
+
 The original-APK extraction tests require retained local reference artifacts and
 are not run on hosted workers. The prepared-data and Android production-adapter
 tests do run there. Human Arabic pronunciation, touch gestures and original-app

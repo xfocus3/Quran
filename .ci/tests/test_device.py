@@ -15,9 +15,60 @@ from unittest.mock import patch
 SCRIPT = Path(__file__).resolve().parents[1] / 'device.py'
 sys.path.insert(0, str(SCRIPT.parent))
 from emulator_diagnostics import capture
+from prepare_emulator import prepare
 
 
 class DeviceFailureTest(unittest.TestCase):
+    def test_initial_anr_evidence_survives_distinct_test_boot(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            out = Path(tmp)
+            rebooted = False
+            reads_after_reboot = 0
+
+            def command(args, **kwargs):
+                nonlocal reads_after_reboot
+                if args[-1] == '/proc/sys/kernel/random/boot_id':
+                    if rebooted:
+                        reads_after_reboot += 1
+                    # The old boot may still answer immediately after reboot.
+                    return 'new-boot' if reads_after_reboot > 1 else 'first-boot'
+                return '1'
+
+            def reboot(args, **kwargs):
+                nonlocal rebooted
+                rebooted = True
+
+            def first_boot(adb, target, prefix):
+                (target / f'{prefix}-lastanr.txt').write_text('initial GoogleSdkSetup ANR')
+
+            with patch.dict(os.environ, {'GITHUB_ACTIONS': 'true', 'RUNNER_ENVIRONMENT': 'github-hosted'}), \
+                    patch('subprocess.check_output', side_effect=command), \
+                    patch('subprocess.check_call', side_effect=reboot), \
+                    patch('prepare_emulator.capture', side_effect=first_boot), \
+                    patch('time.sleep'):
+                receipt = prepare(['adb', '-s', 'emulator-5554'], out)
+            self.assertEqual(receipt['first_boot']['boot_id'], 'first-boot')
+            self.assertEqual(receipt['test_boot']['boot_id'], 'new-boot')
+            self.assertIn('GoogleSdkSetup ANR', (out / 'provisioned-first-boot-lastanr.txt').read_text())
+
+    def test_incomplete_provisioning_cannot_become_test_boot(self):
+        with tempfile.TemporaryDirectory() as tmp, \
+                patch.dict(os.environ, {'GITHUB_ACTIONS': 'true', 'RUNNER_ENVIRONMENT': 'github-hosted'}), \
+                patch('subprocess.check_output', return_value='0'), \
+                patch('subprocess.check_call') as reboot:
+            with self.assertRaisesRegex(TimeoutError, 'provisioning did not complete'):
+                prepare(['adb', '-s', 'emulator-5554'], Path(tmp), timeout=0)
+            reboot.assert_not_called()
+
+    def test_unchanged_boot_cannot_become_test_boot(self):
+        with tempfile.TemporaryDirectory() as tmp, \
+                patch.dict(os.environ, {'GITHUB_ACTIONS': 'true', 'RUNNER_ENVIRONMENT': 'github-hosted'}), \
+                patch('subprocess.check_output', return_value='1'), \
+                patch('subprocess.check_call'), patch('prepare_emulator.capture'):
+            with self.assertRaisesRegex(TimeoutError, 'distinct provisioned test boot'):
+                prepare(['adb', '-s', 'emulator-5554'], Path(tmp), timeout=0)
+            self.assertIsNone(json.loads((Path(tmp) / 'provisioning.json').read_text())['test_boot'])
+
     def test_lost_adb_preserves_last_successful_boot_snapshot(self):
         with tempfile.TemporaryDirectory() as tmp:
             out = Path(tmp)

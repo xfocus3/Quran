@@ -10,6 +10,7 @@ import time
 import traceback
 from emulator_diagnostics import capture
 from emulator_profile import PHYSICAL_SIZE, PHYSICAL_DENSITY
+from prepare_emulator import prepare
 
 OUT = Path('.ci/out/device')
 OUT.mkdir(parents=True, exist_ok=True)
@@ -57,8 +58,11 @@ def main():
     if api not in (35, 36):
         raise ValueError('Expected Android 15 or 16')
     result['api'] = api
+    result['provisioning'] = prepare(adb, OUT)
     run(*adb, 'root')
     run(*adb, 'wait-for-device')
+    if int(shell('getprop', 'ro.build.version.sdk').strip()) != api:
+        raise ValueError('Hosted Android API changed during provisioning')
     # Configure the physical viewport before boot, not by restarting System UI
     # with a display override during its first-boot initialization.
     if shell('wm', 'size').strip() != PHYSICAL_SIZE or shell('wm', 'density').strip() != PHYSICAL_DENSITY:

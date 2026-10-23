@@ -65,6 +65,26 @@ jobs:
           pre-emulator-launch-script: python .ci/configure_avd.py
           emulator-options: -no-window -gpu swiftshader -feature -Vulkan -no-snapshot -noaudio -no-boot-anim -camera-back none -camera-front none -writable-system
           script: python .ci/device.py
+      - name: Encrypt device diagnostics before packaging APKs
+        if: always()
+        env:
+          QURAN_CI_KEY: ${{ secrets.QURAN_CI_KEY }}
+        run: |
+          mkdir -p .ci/out/device .ci/upload
+          test -n "$QURAN_CI_KEY"
+          observer_status=0
+          python .ci/watch_emulator.py --stop || observer_status=$?
+          python .ci/vault.py seal .ci/out/device .ci/upload/device-${{ matrix.api }}.enc
+          exit "$observer_status"
+      - name: Retain early encrypted diagnostics
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: device-${{ matrix.api }}-${{ github.sha }}
+          path: .ci/upload/device-${{ matrix.api }}.enc
+          if-no-files-found: error
+          retention-days: 1
+          compression-level: 0
       - name: Encrypt build outputs and device evidence
         if: always()
         env:
@@ -81,7 +101,7 @@ jobs:
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: android-${{ matrix.api }}-${{ github.sha }}
-          path: .ci/upload/*.enc
+          path: .ci/upload/android-${{ matrix.api }}.enc
           if-no-files-found: error
           retention-days: 1
           compression-level: 0
