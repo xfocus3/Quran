@@ -9,6 +9,7 @@ import sys
 import time
 import traceback
 from emulator_diagnostics import capture
+from emulator_profile import PHYSICAL_SIZE, PHYSICAL_DENSITY
 
 OUT = Path('.ci/out/device')
 OUT.mkdir(parents=True, exist_ok=True)
@@ -60,7 +61,7 @@ def main():
     run(*adb, 'wait-for-device')
     # Configure the physical viewport before boot, not by restarting System UI
     # with a display override during its first-boot initialization.
-    if shell('wm', 'size').strip() != 'Physical size: 720x1280' or shell('wm', 'density').strip() != 'Physical density: 320':
+    if shell('wm', 'size').strip() != PHYSICAL_SIZE or shell('wm', 'density').strip() != PHYSICAL_DENSITY:
         raise ValueError('Hosted comparison viewport differs from the preboot configuration')
     time.sleep(30)
     require_healthy_android('startup')

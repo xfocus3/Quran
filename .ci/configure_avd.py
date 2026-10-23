@@ -3,12 +3,13 @@ import os
 from pathlib import Path
 import subprocess
 import sys
+from emulator_profile import LCD
 
 if os.environ.get('GITHUB_ACTIONS') != 'true' or os.environ.get('RUNNER_ENVIRONMENT') != 'github-hosted':
     raise RuntimeError('AVD configuration belongs to the disposable hosted worker')
 
 path = Path(os.environ['ANDROID_AVD_HOME']) / 'quran-ci.avd/config.ini'
-settings = {'hw.lcd.width': '720', 'hw.lcd.height': '1280', 'hw.lcd.density': '320'}
+settings = LCD
 lines = [line for line in path.read_text().splitlines()
          if line.partition('=')[0].strip() not in settings]
 path.write_text('\n'.join(lines + [f'{key}={value}' for key, value in settings.items()]) + '\n')
