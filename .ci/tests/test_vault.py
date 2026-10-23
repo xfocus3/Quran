@@ -1,4 +1,5 @@
 import io
+import hashlib
 import os
 from pathlib import Path
 import sys
@@ -11,6 +12,25 @@ import vault
 
 
 class VaultTest(unittest.TestCase):
+    def test_verify_rejects_links_even_inside_the_root(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / 'real').write_bytes(b'fixture')
+            (root / 'linked').symlink_to('real')
+            with self.assertRaises(ValueError):
+                vault.verify({'files': {'linked': hashlib.sha256(b'fixture').hexdigest()}}, root)
+
+    def test_file_cannot_be_a_directory_ancestor(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            stream = io.BytesIO()
+            with tarfile.open(fileobj=stream, mode='w:gz') as archive:
+                for name in ('parent', 'parent/child'):
+                    archive.addfile(tarfile.TarInfo(name))
+            destination = Path(tmp) / 'output'
+            with self.assertRaises(ValueError):
+                vault.extract(stream.getvalue(), destination)
+            self.assertFalse(destination.exists())
+
     def test_authenticated_round_trip_and_corruption(self):
         key = os.urandom(32)
         data = b'private build fixture'

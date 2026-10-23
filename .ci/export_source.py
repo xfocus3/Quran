@@ -50,7 +50,7 @@ def export(source, ref, destination):
     previous = json.loads(receipt_path.read_text())['files'] if receipt_path.exists() else {}
     # Validate destination ownership before changing any file. Never follow a
     # symlink in an existing checkout or delete files outside this export's scope.
-    for name in set(staged) | {name for name in previous if selected(name)}:
+    for name in set(staged) | {name for name in previous if selected(name)} | {'.ci/source.json'}:
         path = destination / name
         if any(parent.is_symlink() for parent in (path, *path.parents)):
             raise ValueError('Refusing a linked export destination')

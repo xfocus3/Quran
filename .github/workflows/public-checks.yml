@@ -14,6 +14,7 @@ jobs:
         with:
           persist-credentials: false
       - run: python3 .ci/public_boundary.py
+      - run: python3 .ci/verify_source.py
       - run: |
           python3 -m venv /tmp/quran-ci-tests
           /tmp/quran-ci-tests/bin/pip --disable-pip-version-check install -r .ci/requirements.txt

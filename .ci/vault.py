@@ -36,12 +36,13 @@ def extract(data, destination):
         members = archive.getmembers()
         total = 0
         seen = set()
+        files = {PurePosixPath(member.name) for member in members if member.isfile()}
         for member in members:
             path = PurePosixPath(member.name)
             if (path.is_absolute() or '..' in path.parts or
                     str(path) != member.name or '\\' in member.name or
                     not (member.isfile() or member.isdir()) or
-                    member.name in seen):
+                    member.name in seen or any(parent in files for parent in path.parents)):
                 raise ValueError('Unsafe archive member')
             seen.add(member.name)
             total += member.size
@@ -77,6 +78,19 @@ def sha(path):
         return hashlib.file_digest(stream, 'sha256').hexdigest()
 
 
+def verify(manifest, root):
+    root = root.resolve()
+    for name, expected in manifest['files'].items():
+        relative = PurePosixPath(name)
+        path = root / name
+        if (relative.is_absolute() or '..' in relative.parts or str(relative) != name or
+                '\\' in name or any(p.is_symlink() for p in (path, *path.parents)) or
+                not path.resolve().is_relative_to(root)):
+            raise ValueError('Input path escapes root or follows a link')
+        if sha(path) != expected:
+            raise ValueError('Input digest mismatch')
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('command', choices=['seal', 'open', 'verify'])
@@ -85,13 +99,7 @@ def main():
     args = parser.parse_args()
     if args.command == 'verify':
         manifest = json.loads(args.source.read_text())
-        root = args.destination
-        for name, expected in manifest['files'].items():
-            path = (root / name).resolve()
-            if not path.is_relative_to(root.resolve()) or path.is_symlink():
-                raise ValueError('Input path escapes root')
-            if sha(path) != expected:
-                raise ValueError('Input digest mismatch')
+        verify(manifest, args.destination)
         print(f"Verified {len(manifest['files'])} pinned input files")
         return
     key = base64.b64decode(os.environ['QURAN_CI_KEY'], validate=True)

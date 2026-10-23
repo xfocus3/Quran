@@ -11,6 +11,7 @@ run() {
   fi
 }
 run inputs python .ci/vault.py verify .ci/inputs.json .
+run source python .ci/verify_source.py
 run prepared python tools/prepare_artifacts.py verify-prepared
 run flutter-dependencies flutter pub get --enforce-lockfile
 run flutter-analysis flutter analyze --no-pub
