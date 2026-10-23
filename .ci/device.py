@@ -107,7 +107,21 @@ def main():
         raise ValueError('Hosted emulator has no supported physical keyboard')
     os.environ['QURAN_CI_KEYBOARD'] = keyboard.group(1)
     # The Google APIs image supplies TalkBack. Missing service is a hard failure.
-    shell('pm', 'path', 'com.google.android.marvin.talkback')
+    talkback_package = 'com.google.android.marvin.talkback'
+    shell('pm', 'path', talkback_package)
+    # Provision the test service, not the application under test. Android16
+    # otherwise opens its notification permission dialog when TalkBack is
+    # toggled for the distant-state setup, covering all reader controls.
+    shell('pm', 'grant', talkback_package, 'android.permission.POST_NOTIFICATIONS')
+    shell('pm', 'set-permission-flags', talkback_package,
+          'android.permission.POST_NOTIFICATIONS', 'user-set')
+    shell('pm', 'clear-permission-flags', talkback_package,
+          'android.permission.POST_NOTIFICATIONS', 'user-fixed')
+    permissions = shell('dumpsys', 'package', talkback_package)
+    if not re.search(r'^\s+android\.permission\.POST_NOTIFICATIONS: granted=true(?:,|\s|$)',
+                     permissions, re.M):
+        raise ValueError('TalkBack notification permission was not provisioned')
+    result['talkback_notification_permission'] = 'granted for test service only'
     # Start from clean app personal state for deterministic first/final boundaries.
     shell('pm', 'clear', 'com.xfocus.quranly.local')
     with (OUT / 'talkback.log').open('w') as log:
