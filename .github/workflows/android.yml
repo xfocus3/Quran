@@ -53,12 +53,16 @@ jobs:
           api-level: ${{ matrix.api }}
           target: google_apis
           arch: x86_64
+          avd-name: quran-ci
           profile: pixel_7_pro
+          cores: 4
           ram-size: 4096M
           heap-size: 512M
           disk-size: 4G
           disable-animations: true
-          emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim -camera-back none -camera-front none -writable-system
+          enable-hw-keyboard: true
+          pre-emulator-launch-script: python .ci/configure_avd.py
+          emulator-options: -no-window -gpu swiftshader -feature -Vulkan -no-snapshot -noaudio -no-boot-anim -camera-back none -camera-front none -writable-system
           script: python .ci/device.py
       - name: Encrypt build outputs and device evidence
         if: always()

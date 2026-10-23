@@ -6,6 +6,7 @@ from pathlib import Path
 import re
 import subprocess
 import sys
+import time
 import traceback
 
 OUT = Path('.ci/out/device')
@@ -13,13 +14,53 @@ OUT.mkdir(parents=True, exist_ok=True)
 result = {'source_commit': os.environ['GITHUB_SHA'], 'passed': False,
           'reference_parity_accepted': False, 'phone_access': False,
           'android_docker': False}
+adb = None
 
 
 def run(*args, timeout=60):
     return subprocess.check_output(list(args), text=True, stderr=subprocess.STDOUT, timeout=timeout)
 
 
+def diagnostics(stage):
+    """Best-effort bounded private evidence; never replace the original failure."""
+    if adb is None:
+        return
+    commands = {
+        'logcat': ['logcat', '-d', '-b', 'all', '-t', '3000'],
+        'lastanr': ['shell', 'dumpsys', 'activity', 'lastanr'],
+        'anr-traces': ['shell', 'dumpsys activity lastanr-traces | head -c 2097152'],
+        'cpu': ['shell', 'dumpsys', 'cpuinfo'],
+        'memory': ['shell', 'cat', '/proc/meminfo'],
+        'window': ['shell', 'dumpsys', 'window', 'displays'],
+        'properties': ['shell', 'getprop'],
+        'input': ['shell', 'getevent', '-pl'],
+    }
+    for name, args in commands.items():
+        try:
+            value = run(*adb, *args, timeout=15)
+        except Exception as error:
+            value = f'Diagnostic unavailable: {type(error).__name__}\n'
+        (OUT / f'{stage}-{name}.txt').write_text(value)
+    try:
+        image = subprocess.check_output([*adb, 'exec-out', 'screencap', '-p'], timeout=15)
+        (OUT / f'{stage}-screen.png').write_bytes(image)
+    except Exception:
+        pass
+
+
+def require_healthy_android(stage):
+    # A boot property alone precedes the observed SurfaceFlinger/System UI ANR.
+    # Never dismiss that dialog or turn an unhealthy test platform into a pass.
+    boot = run(*adb, 'shell', 'getprop', 'sys.boot_completed').strip()
+    anr = run(*adb, 'shell', 'dumpsys', 'activity', 'lastanr')
+    (OUT / f'{stage}-lastanr.txt').write_text(anr)
+    if boot != '1' or '<no ANR has occurred since boot>' not in anr:
+        raise ValueError('Android startup/runtime is unhealthy; inspect encrypted diagnostics')
+    result.setdefault('android_health_checks', []).append(stage)
+
+
 def main():
+    global adb
     devices = [line.split()[0] for line in run('adb', 'devices').splitlines()[1:]
                if '\tdevice' in line]
     if len(devices) != 1 or not devices[0].startswith('emulator-'):
@@ -35,8 +76,13 @@ def main():
     result['api'] = api
     run(*adb, 'root')
     run(*adb, 'wait-for-device')
-    shell('wm', 'size', '720x1280')
-    shell('wm', 'density', '320')
+    # Configure the physical viewport before boot, not by restarting System UI
+    # with a display override during its first-boot initialization.
+    if shell('wm', 'size').strip() != 'Physical size: 720x1280' or shell('wm', 'density').strip() != 'Physical density: 320':
+        raise ValueError('Hosted comparison viewport differs from the preboot configuration')
+    time.sleep(30)
+    require_healthy_android('startup')
+    diagnostics('startup')
     shell('settings', 'put', 'system', 'font_scale', '1.0')
     shell('settings', 'put', 'global', 'airplane_mode_on', '1')
     shell('svc', 'wifi', 'disable')
@@ -84,6 +130,7 @@ def main():
     if talkback['status'] != 'passed' or len(talkback['checks']) != 13:
         raise ValueError('TalkBack checks incomplete')
     result['talkback'] = talkback
+    require_healthy_android('after-talkback')
     result['passed'] = True
 
 
@@ -92,6 +139,7 @@ try:
 except BaseException:
     result['error'] = traceback.format_exc()
 finally:
+    diagnostics('final')
     (OUT / 'device-result.json').write_text(json.dumps(result, indent=2) + '\n')
 if not result['passed']:
     print('::error::Device checks failed; inspect encrypted device-result.json')
