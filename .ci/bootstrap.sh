@@ -9,8 +9,9 @@ df -h "$GITHUB_WORKSPACE"
 flutter_dir="$RUNNER_TEMP/flutter"
 git init --quiet "$flutter_dir"
 git -C "$flutter_dir" remote add origin https://github.com/flutter/flutter.git
-git -C "$flutter_dir" fetch --quiet --depth 1 origin f6ff1529fd6d8af5f706051d9251ac9231c83407
-git -C "$flutter_dir" checkout --quiet --detach FETCH_HEAD
+git -C "$flutter_dir" fetch --quiet --depth 1 origin refs/tags/3.38.5:refs/tags/3.38.5
+test "$(git -C "$flutter_dir" rev-parse '3.38.5^{commit}')" = f6ff1529fd6d8af5f706051d9251ac9231c83407
+git -C "$flutter_dir" checkout --quiet --detach 3.38.5
 echo "$flutter_dir/bin" >> "$GITHUB_PATH"
 export PATH="$flutter_dir/bin:$PATH"
 flutter config --no-analytics
