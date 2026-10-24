@@ -403,12 +403,38 @@ def read_png(data):
     return w, h, channels, rows
 
 
+RASTER_LINE_LIMIT = 256
+
+
+def pixel_bin_weights(pixels, bins):
+    """Exact overlap of unit pixel areas with equal normalized grid cells.
+
+    A pixel straddling a cell boundary contributes proportionally to both;
+    integer arithmetic defines the overlaps before conversion to a fraction.
+    Each row sums to one. Unlike point/floor binning, this represents density
+    continuously as raster scale/phase changes, without alignment searches or
+    extra smoothing. Total table entries <= pixels + bins (shared edges less).
+    """
+    return [[(cell, (min((pixel + 1) * bins, (cell + 1) * pixels) -
+                     max(pixel * bins, cell * pixels)) / bins)
+             for cell in range(pixel * bins // pixels,
+                               ((pixel + 1) * bins + pixels - 1) // pixels)]
+            for pixel in range(pixels)]
+
+
 def ink_lines(png, box, gap, clipped=False):
     """64x24 ink-density signatures of complete Quran lines, in source order.
 
-    Only dark pixels are compared; antialiasing and the 2x export / actual
-    device-density scale differ. Bounds come from actual Android Quran semantics
-    for screens, and the current source card contract for the export.
+    The existing dark-pixel/alpha predicate and segmentation are retained.
+    Integrate each dark pixel's area over the grid; L2 normalization cancels
+    the common pixel-area/density factor. Keep horizontal whitespace and line
+    order. Bounds come from Android semantics / the candidate card contract.
+    This coarse coverage check cannot certify individual marks or source text.
+
+    PNG decode caps pixels at 32M. For P crop pixels, K dark pixels, W width,
+    H line height: scan O(P); weights O(W+64+H+24), accumulation bounded by
+    O(K+24W+64H+1536) per line, even when upsampling. At most 256 signatures;
+    comparison O(256^2 * 1536). No shift/scale search or unbounded refinement.
     """
     w, h, channels, rows = png
     left, top, right, bottom = box
@@ -435,11 +461,15 @@ def ink_lines(png, box, gap, clipped=False):
             continue
         if y2 - y1 < gap:  # isolated punctuation/noise isn't a complete line
             continue
-        signature = [0] * (64 * 24)
+        require(len(result) < RASTER_LINE_LIMIT, 'Quran raster line budget exceeded')
+        signature = [0.] * (64 * 24)
+        xweights = pixel_bin_weights(right - left, 64)
+        yweights = pixel_bin_weights(y2 - y1, 24)
         for y, points in group:
             for x in points:
-                signature[min(23, (y - y1) * 24 // (y2 - y1)) * 64 +
-                          min(63, (x - left) * 64 // (right - left))] += 1
+                for iy, wy in yweights[y - y1]:
+                    for ix, wx in xweights[x - left]:
+                        signature[iy * 64 + ix] += wx * wy
         norm = math.sqrt(sum(v * v for v in signature))
         require(norm > 0, 'Empty ink signature')
         result.append({'bounds': [left, y1, right, y2],
@@ -447,18 +477,35 @@ def ink_lines(png, box, gap, clipped=False):
     return result
 
 
-def match_lines(observed, exported):
+def line_diagnostics(observed, exported):
+    """Numeric comparisons before validation, including every candidate score."""
     require(observed and exported, 'No complete Quran ink lines to compare')
-    matches = []
+    require(max(len(observed), len(exported)) <= RASTER_LINE_LIMIT, 'Quran raster line budget exceeded')
+    diagnostics = []
     for line in observed:
         scores = [sum(a * b for a, b in zip(line['signature'], target['signature']))
                   for target in exported]
         index = max(range(len(scores)), key=scores.__getitem__)
-        require(scores[index] >= .94, f'Screen Quran line absent/different in export: best={scores[index]:.4f}')
-        matches.append({'line': index, 'cosine': round(scores[index], 5), 'screen_bounds': line['bounds']})
+        diagnostics.append({'line': index, 'cosine': scores[index],
+                            'screen_bounds': line['bounds'], 'scores': scores})
+    return diagnostics
+
+
+def checked_line_matches(diagnostics):
+    require(diagnostics, 'No complete Quran ink lines to compare')
+    matches = []
+    for row in diagnostics:
+        require(row['cosine'] >= .94,
+                f"Screen Quran line absent/different in export: best={row['cosine']:.4f}")
+        matches.append({'line': row['line'], 'cosine': round(row['cosine'], 5),
+                        'screen_bounds': row['screen_bounds']})
     require(all(a['line'] < b['line'] for a, b in zip(matches, matches[1:])),
             'Export Quran line order differs from the scrolled screen')
     return matches
+
+
+def match_lines(observed, exported):
+    return checked_line_matches(line_diagnostics(observed, exported))
 
 
 class ReaderChecks:
@@ -892,6 +939,34 @@ class ReaderChecks:
         require(all(re.fullmatch(r'verse-\d+-\d+-[A-Za-z0-9-]+\.png', n) for n in names), 'Unexpected share cache member')
         return set(names)
 
+    def wait_for_chooser(self, s, a, name, png=True):
+        """Poll current native XML, then retain that exact checked hierarchy.
+
+        Activity history can still mention the previous ChooserActivity while
+        the reader is visible. Only the visible native preview with the exact
+        requested key/caption establishes readiness. XML dumps pace this bounded
+        poll; no fixed settling sleep or second capture/dump is needed.
+        """
+        import xml.etree.ElementTree as ET
+        caption = f'Verse {a}, Surah {s} shared via https://quranly.app !'
+        deadline = time.monotonic() + 25
+        while time.monotonic() < deadline:
+            root = self.dump()
+            now = time.monotonic()
+            require(now < self.deadline, 'Reader check exceeded 40 minute budget')
+            if now >= deadline:
+                break
+            previews = [n for _, n, _ in self.visible_nodes(root)
+                        if n.get('package') == 'com.android.intentresolver'
+                        and n.get('resource-id') == 'com.android.intentresolver:id/content_preview_text']
+            if len(previews) == 1 and self.d.label(previews[0]) == caption:
+                ET.ElementTree(root).write(OUT / (name + '.xml'), encoding='utf-8', xml_declaration=True)
+                if png:
+                    (OUT / (name + '.png')).write_bytes(subprocess.check_output(
+                        self.adb + ['exec-out', 'screencap', '-p'], timeout=35))
+                return root
+        raise AssertionError('Native image chooser with exact caption/key not visible within 25 seconds')
+
     def share(self, s, a, repeat=False):
         key = f'{s}:{a}'
         self.jump(s, a)
@@ -901,19 +976,11 @@ class ReaderChecks:
         require(share_control.get('enabled') == 'true' and share_control.get('clickable') == 'true',
                 'Share control lacks enabled CLICK')
         self.d.tap(share_control)
-        deadline = time.monotonic() + 25
-        while time.monotonic() < deadline:
-            activity = self.d.sh('dumpsys', 'activity', 'top')
-            if 'ChooserActivity' in activity:
-                break
-            time.sleep(.25)
-        else:
-            raise AssertionError('Native image chooser did not open')
         name = 'share-' + key.replace(':', '-') + ('-repeat' if repeat else '')
+        self.wait_for_chooser(s, a, name + '-chooser', png=not repeat)
+        # Diagnostic only; activity history is never a readiness predicate.
+        activity = self.d.sh('dumpsys', 'activity', 'top')
         (OUT / (name + '-activity.txt')).write_text(activity)
-        root = self.capture(name + '-chooser', png=not repeat)
-        caption = f'Verse {a}, Surah {s} shared via https://quranly.app !'
-        require(any(caption in self.d.label(n) for n in root.iter('node')), 'Chooser caption/key missing')
         after = self.exports()
         added = after - before
         require(len(added) == 1 and before <= after, 'Expected exactly one new cache export')
@@ -937,6 +1004,32 @@ class ReaderChecks:
                     uri=uri, returned_bounds=return_bounds, cancelled=True, delivered=False)
         return png
 
+    def compare_raster_frame(self, frame, root, screen, exported, box, gap, clipped, timing):
+        """Keep one rolling EXACT checked pair before decode/match can fail.
+
+        XML then screencap are sequential OS observations, not an atomic live
+        snapshot. We never redump/recapture to manufacture a failure pair.
+        Successful first/final selective captures are still saved separately.
+        """
+        import xml.etree.ElementTree as ET
+        xml = ET.tostring(root, encoding='utf-8')
+        (OUT / 'long-raster-checked.png').write_bytes(screen)
+        (OUT / 'long-raster-checked.xml').write_bytes(xml)
+        details = {'frame': frame, 'state': 'captured', 'screen_sha256': digest(screen),
+                   'xml_sha256': digest(xml), 'quran_bounds': box, 'gap': gap,
+                   'clipped': clipped, 'timing': timing,
+                   'atomicity': 'sequential XML then screencap; live changes between them are possible',
+                   'method': '64x24 dark-pixel area overlap, L2; cosine >=0.94',
+                   'export_bounds': [line['bounds'] for line in exported]}
+        path = OUT / 'long-raster-checked.json'
+        path.write_text(json.dumps(details, indent=2))
+        decoded = read_png(screen)
+        visible = ink_lines(decoded, box, gap=gap, clipped=clipped)
+        details.update(state='computed-before-validation', dimensions=decoded[:2],
+                       lines=line_diagnostics(visible, exported) if visible else [])
+        path.write_text(json.dumps(details, indent=2))
+        return checked_line_matches(details['lines']) if visible else []
+
     def long_export(self, data):
         png = read_png(data)
         w, h = png[:2]
@@ -949,22 +1042,25 @@ class ReaderChecks:
         self.seek('العودة إلى اختيار القراءة', up=False, exact=True)
         matches, traversal = [], RasterTraversal(len(exported))
         for frame in range(traversal.frame_limit):
+            timing = {'xml_requested_monotonic': time.monotonic()}
             root = self.dump(f'long-raster-{frame:02d}')
+            timing['xml_returned_monotonic'] = time.monotonic()
             node = self.d.find('الآية 2:282 ', root)
             require(node is not None and self.d.label(node) == 'الآية 2:282 ' + self.canonical['2:282'],
                     'Long raster lost canonical ayah identity')
-            screen = subprocess.check_output(self.adb + ['exec-out', 'screencap', '-p'], timeout=35)
-            decoded = read_png(screen)
             box = self.d.bounds(node)
             scrolls = [n for n in root.iter('node') if n.get('scrollable') == 'true']
             require(scrolls, 'Long reader has no scroll owner')
             l, t, r, b = self.d.bounds(max(scrolls, key=lambda n: self.d.bounds(n)[3] - self.d.bounds(n)[1]))
-            visible = ink_lines(decoded, box, gap=round(8 * (box[2] - box[0]) / (w - 256 / 3)),
-                                clipped=(box[1] <= t + 1, box[3] >= b - 1))
-            matched = []
+            timing['screen_requested_monotonic'] = time.monotonic()
+            screen = subprocess.check_output(self.adb + ['exec-out', 'screencap', '-p'], timeout=35)
+            timing['screen_returned_monotonic'] = time.monotonic()
+            matched = self.compare_raster_frame(
+                frame, root, screen, exported, box,
+                gap=round(8 * (box[2] - box[0]) / (w - 256 / 3)),
+                clipped=(box[1] <= t + 1, box[3] >= b - 1), timing=timing)
             ayah_end = t < box[3] < b - 1
-            if visible:
-                matched = match_lines(visible, exported)
+            if matched:
                 matches.append({'frame': frame, 'screen_sha256': digest(screen), 'matches': matched})
                 # Selective PNG evidence: first, final; raw XML and metrics for
                 # every intermediate state. Avoid dozens of repeated huge PNGs.
@@ -982,7 +1078,7 @@ class ReaderChecks:
             time.sleep(.2)
         details = {'export_line_count': len(exported), 'matched_lines': sorted(traversal.seen), 'frames': matches,
                    'ayah_end_observed': traversal.end_observed,
-                   'method': 'complete visible Quran line ink vs full PNG, cosine >=0.94; no OCR/original-template claim'}
+                   'method': 'complete visible Quran line 64x24 dark-pixel area overlap vs full PNG, cosine >=0.94; no OCR/original-template claim'}
         (OUT / 'long-raster-metrics.json').write_text(json.dumps(details, indent=2))
         traversal.finish()
         self.reader('2:282')

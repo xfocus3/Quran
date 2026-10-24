@@ -205,6 +205,8 @@ class RetainedTraversalTest(ScrollTestCase):
         directory = Path(os.environ.get('QURANLY_FAILED_EVIDENCE_ROOT', '/home/agent/hosted-evidence')) / 'api-36/reader'
         if not directory.is_dir():
             self.skipTest('Private failed-run trace is not mounted')
+        if not (directory / 'unreachable.json').is_file():
+            self.skipTest('Retained traversal failure fixture unavailable; missing ' + str(directory / 'unreachable.json'))
         failure = json.loads((directory / 'unreachable.json').read_text())
         if failure['query'] != 'نهاية السياق 50:12–14':
             self.skipTest('Mounted diagnostics belong to a different failure')
