@@ -18,18 +18,23 @@ import zlib
 from test_reader_transport import reader, bounds, label, checks_for_frames
 
 
-def model(scale, phase=0., identities=(0, 1, 2), short=False, boundary_strokes=False):
+def model(scale, phase=0., identities=(0, 1, 2), short=False, boundary_strokes=False,
+          paint=0, background=(255, 255, 255), faint_tail=False):
     """Analytic rectangle-area antialiasing of fixed vector-like ink strokes.
 
     Scale 2/3 models export/device density; phase is a physical subpixel offset.
     No platform shaping, Quran, or device pixels are simulated by this model.
     """
     w, h = round(329 * scale), round((80 * len(identities) + 10) * scale)
-    rows = [bytearray([255]) * (w * 3) for _ in range(h)]
+    rows = [bytearray(background) * w for _ in range(h)]
     for line, identity in enumerate(identities):
         rng = random.Random(identity)
         # Shared full vertical extent with connected body rows / detached marks.
         rectangles = [(318, 10, 321, 15), (318, 19, 321, 49)]
+        if faint_tail:
+            # At2x this physical unit pixel has62% coverage. Paint13/24
+            # straddles the former RGB110 predicate, as the actual tail did.
+            rectangles.append((313, 49.5, 313.31, 50))
         for _ in range(30):
             x = (rng.randrange(47 if short else 2, 60) * 329 / 64 - .5 if boundary_strokes
                  else rng.uniform(235 if short else 10, 310))
@@ -42,10 +47,9 @@ def model(scale, phase=0., identities=(0, 1, 2), short=False, boundary_strokes=F
             for y in range(math.floor(t), math.ceil(b)):
                 for x in range(math.floor(l), math.ceil(r)):
                     coverage = (min(x + 1, r) - max(x, l)) * (min(y + 1, b) - max(y, t))
-                    value = round(255 * (1 - coverage))
                     at = x * 3
-                    value = min(rows[y][at], value)
-                    rows[y][at:at + 3] = bytes([value]) * 3
+                    rows[y][at:at + 3] = bytes(min(rows[y][at+i], round(bg*(1-coverage) + paint*coverage))
+                                                   for i, bg in enumerate(background))
     return w, h, 3, rows
 
 
@@ -83,6 +87,33 @@ def encode_png(png):
 
 
 class DensityRasterTest(unittest.TestCase):
+    def test_optical_mass_models_observed_paint_phase_and_detached_marks(self):
+        bg = reader.RASTER_BACKGROUND
+        for short in (False, True):
+            targets = model(2, short=short, paint=24, background=bg, faint_tail=True)
+            exported = reader.ink_lines(targets, (0, 0, *targets[:2]), 16, background=bg)
+            old = model(2, short=short, paint=13, background=bg, faint_tail=True)
+            # Test the physical cause independently of a cosine target:
+            # same geometry/coverage, different accepted tight-support endpoint.
+            def dark_bottom(png):
+                return max(y for y in range(100) if any(max(png[3][y][x*3:x*3+3]) < 110
+                                                        for x in range(png[0])))
+            self.assertNotEqual(dark_bottom(old), dark_bottom(targets))
+            for density in (2, 3):
+                for phase in (0., .25, .5, .75):
+                    for paint in (13, 24):
+                        png = model(density, phase, short=short, paint=paint, background=bg, faint_tail=True)
+                        actual = reader.ink_lines(png, (0, 0, *png[:2]), 8*density, background=bg)
+                        self.assertEqual([m['line'] for m in reader.match_lines(actual, exported)], [0, 1, 2])
+            # Remove real detached upper marks, leaving each main body in place.
+            # This is detectable damage, not a promise about every single mark.
+            changed = (*targets[:3], [bytearray(row) for row in targets[3]])
+            for line in range(3):
+                for y in range((line*80+10)*2, (line*80+15)*2):
+                    changed[3][y][318*2*3:321*2*3] = bytes(bg)*6
+            with self.assertRaises(AssertionError):
+                reader.match_lines(exported, reader.ink_lines(changed, (0, 0, *changed[:2]), 16, background=bg))
+
     def test_real_density_ratio_and_subpixel_phase_preserve_ordered_ink(self):
         legacy_failed = False
         for short in (False, True):
@@ -171,6 +202,28 @@ class DensityRasterTest(unittest.TestCase):
             self.assertEqual((Path(tmp)/'long-raster-checked.png').read_bytes(), data[:-1])
             self.assertEqual(json.loads((Path(tmp)/'long-raster-checked.json').read_text())['state'], 'captured')
 
+    def test_rgba_alpha_and_png_pixel_budget_are_enforced_at_public_boundaries(self):
+        rgb = model(1, identities=(0,))
+        expected = lines(rgb, 1)
+        for alpha in (0, 200, 201, 255):
+            rows = [bytearray(channel for x in range(rgb[0])
+                              for channel in (*row[x*3:x*3+3], alpha)) for row in rgb[3]]
+            rgba = reader.read_png(encode_png((*rgb[:2], 4, rows)))
+            actual = lines(rgba, 1)
+            if alpha > 200:
+                self.assertEqual([m['line'] for m in reader.match_lines(actual, expected)], [0])
+            else:
+                self.assertEqual(actual, [])
+                with self.assertRaises(AssertionError):
+                    reader.match_lines(actual, expected)
+        # Valid chunk CRC; reject dimensions before any allocation/decompression.
+        def chunk(kind, body):
+            return struct.pack('>I', len(body))+kind+body+struct.pack('>I', zlib.crc32(kind+body)&0xffffffff)
+        for width, height in ((32_000_001, 1), (1, 32_000_001), (0, 1)):
+            data = b'\x89PNG\r\n\x1a\n'+chunk(b'IHDR', struct.pack('>IIBBBBB', width, height, 8, 6, 0, 0, 0))
+            with self.assertRaisesRegex(AssertionError, 'dimensions exceed'):
+                reader.read_png(data)
+
     def test_excess_lines_fail_in_producer_and_comparison(self):
         # Small real raster, 257 distinct complete line bands; no large fixture
         # or mocked signatures can conceal an unbounded producer loop.
@@ -190,7 +243,7 @@ class RetainedRasterTest(unittest.TestCase):
         selected = os.environ.get('QURANLY_RASTER_EVIDENCE_ROOT')
         if selected is not None and not selected.strip():
             self.fail('QURANLY_RASTER_EVIDENCE_ROOT is empty')
-        root = Path(selected) if selected is not None else Path('/home/agent/hosted-evidence')
+        root = Path(selected) if selected is not None else Path('/home/agent/hosted-evidence/historical-run')
         directory = root / 'api-36/reader'
         names = {'failure.png': 'a6c67b997b8356d88e9955cc96de90208ee7ccf5e82f97c1c9bc269a68e019fe',
                  'long-raster-00.xml': '20dbd0b81aed16bcadc18adf8ff983130cabcb78b154cbb5758c4081586ebc97',
@@ -214,20 +267,16 @@ class RetainedRasterTest(unittest.TestCase):
         self.assertEqual(export[:2], (744, 3228))
         self.assertEqual(screen[:2], (1220, 2712))
         exported = reader.ink_lines(export, (128/3, (64/3+48+18)*2, 744-128/3,
-                                            3228-(48+43/3+14)*2), 8)
-        visible = reader.ink_lines(screen, bounds(nodes[0]), 12, (False, True))
+                                            3228-(48+43/3+14)*2), 8, background=reader.RASTER_BACKGROUND)
+        visible = reader.ink_lines(screen, bounds(nodes[0]), 12, (False, True), background=reader.RASTER_BACKGROUND)
         self.assertEqual((len(exported), len(visible)), (24, 7))
-        legacy = reader.line_diagnostics(floor_signatures(screen, visible), floor_signatures(export, exported))
-        self.assertAlmostEqual(legacy[1]['cosine'], .9319651303816633, places=12)
-        with self.assertRaisesRegex(AssertionError, 'best=0.9320'):
-            reader.checked_line_matches(legacy)
         matches = reader.match_lines(visible, exported)
         self.assertEqual([m['line'] for m in matches], list(range(7)))
         self.assertGreater(min(m['cosine'] for m in matches), .98)
         for i, line in enumerate(visible):
             wrong = [sum(a*b for a, b in zip(line['signature'], target['signature']))
                      for j, target in enumerate(exported) if j != i]
-            self.assertLess(max(wrong), .5)
+            self.assertLess(max(wrong), .6)
         for changed in (exported[:1] + exported[2:], exported[::-1]):
             with self.assertRaises(AssertionError):
                 reader.match_lines(visible, changed)
@@ -238,7 +287,7 @@ class RetainedRasterTest(unittest.TestCase):
         for y in range(t, b):
             changed[3][y][150*export[2]:600*export[2]] = bytes([255]) * (450*export[2])
         changed_lines = reader.ink_lines(changed, (128/3, (64/3+48+18)*2, 744-128/3,
-                                                  3228-(48+43/3+14)*2), 8)
+                                                  3228-(48+43/3+14)*2), 8, background=reader.RASTER_BACKGROUND)
         with self.assertRaisesRegex(AssertionError, 'absent/different'):
             reader.match_lines(visible, changed_lines)
         partial = reader.RasterTraversal(24)

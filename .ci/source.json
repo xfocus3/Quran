@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "candidate_commit": "6a659754c027b82db3a290338b0573d04650bcf1",
+  "candidate_commit": "1dd2c033b897e4362b7a15668a6d0fcc2aaa3266",
   "candidate_accepted": false,
   "files": {
     ".nvmrc": "4c42fb8d6334c5cdcac68b93f96c581fb83b1f58cda898cff115e5e941ef717d",

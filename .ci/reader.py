@@ -5,6 +5,7 @@ probe. Sibling device_ui/device_navigation are the public CI helpers. No Android
 SDK, Pillow, host paths or original captures are needed. Outputs are private.
 """
 import ast
+from array import array
 import gzip
 import hashlib
 import importlib
@@ -406,73 +407,116 @@ def read_png(data):
 RASTER_LINE_LIMIT = 256
 
 
-def pixel_bin_weights(pixels, bins):
-    """Exact overlap of unit pixel areas with equal normalized grid cells.
+def column_ink(contrast):
+    """Exact unit-pixel area integrated over64 equal horizontal cells.
 
-    A pixel straddling a cell boundary contributes proportionally to both;
-    integer arithmetic defines the overlaps before conversion to a fraction.
-    Each row sums to one. Unlike point/floor binning, this represents density
-    continuously as raster scale/phase changes, without alignment searches or
-    extra smoothing. Total table entries <= pixels + bins (shared edges less).
+    Integer boundaries are in1/64 pixel units. Sum whole interior pixels and
+    the two fractional edge pixels. This is algebraically the same overlap
+    integral as distributing each pixel over its cells, including widths<64.
+    Only64 values are allocated; no width-sized Python weight/tuple table.
     """
-    return [[(cell, (min((pixel + 1) * bins, (cell + 1) * pixels) -
-                     max(pixel * bins, cell * pixels)) / bins)
-             for cell in range(pixel * bins // pixels,
-                               ((pixel + 1) * bins + pixels - 1) // pixels)]
-            for pixel in range(pixels)]
+    width = len(contrast)
+    values = []
+    for cell in range(64):
+        start, end = cell * width, (cell + 1) * width
+        first, last = start // 64, (end - 1) // 64
+        if first == last:
+            mass = contrast[first] * (end - start) / 64
+        else:
+            mass = (contrast[first] * (64 - start % 64) +
+                    contrast[last] * (end - last * 64)) / 64 + sum(contrast[first + 1:last])
+        values.append(mass)
+    return values
 
 
-def ink_lines(png, box, gap, clipped=False):
-    """64x24 ink-density signatures of complete Quran lines, in source order.
+# The candidate card's producing background (ReaderPalette.readerCard).
+# It is not inferred from a possibly clipped glyph or a desired match score.
+RASTER_BACKGROUND = (250, 247, 255)
 
-    The existing dark-pixel/alpha predicate and segmentation are retained.
-    Integrate each dark pixel's area over the grid; L2 normalization cancels
-    the common pixel-area/density factor. Keep horizontal whitespace and line
-    order. Bounds come from Android semantics / the candidate card contract.
-    This coarse coverage check cannot certify individual marks or source text.
 
-    PNG decode caps pixels at 32M. For P crop pixels, K dark pixels, W width,
-    H line height: scan O(P); weights O(W+64+H+24), accumulation bounded by
-    O(K+24W+64H+1536) per line, even when upsampling. At most 256 signatures;
-    comparison O(256^2 * 1536). No shift/scale search or unbounded refinement.
+def mass_coordinate(profile, fraction):
+    """Inverse continuous row-mass CDF; interpolate within a physical pixel.
+
+    Row coverage is uniform over its unit area, as in column_ink.
+    Unlike first/last thresholded pixels, a faint edge has proportional
+    influence, rather than redefining the scale of every ink coordinate.
+    """
+    target = sum(mass for _, mass in profile) * fraction
+    before = 0
+    for y, mass in profile:
+        if before + mass >= target:
+            return y + (target - before) / mass
+        before += mass
+    raise AssertionError('Empty ink mass profile')
+
+
+def row_bin_weights(y, top, bottom):
+    """Unit-row overlap; preserve ALL outlying ink in the two edge cells."""
+    scale = 24 / (bottom - top)
+    first = max(0, min(23, math.floor((y - top) * scale)))
+    last = max(0, min(23, math.ceil((y + 1 - top) * scale) - 1))
+    return [(k, max(0., min(y + 1, top + (k + 1) / scale if k < 23 else y + 1) -
+                      max(y, top + k / scale if k else y))) for k in range(first, last + 1)]
+
+
+def ink_lines(png, box, gap, clipped=False, background=(255, 255, 255)):
+    """64x24 continuous optical-ink signatures, in physical line order.
+
+    Contrast is sum(background - RGB), clamped at zero; L2 removes common
+    paint magnitude/density. Alpha <=200 remains excluded. Segment every
+    positive-contrast row, including faint tails/detached marks. The central
+    98% mass interval defines fractional vertical coordinates; the remaining
+    2% is INCLUDED in edge cells, never erased. Crops therefore change their
+    own coordinates and distribution, unlike fixed source-cell prototypes.
+    Horizontal coordinates retain the source/semantic content width.
+
+    This coarse supplement cannot certify individual marks or exact text.
+    It performs no alignment/scale search. P<=32M crop pixels, L<=256 lines:
+    scan/accumulate O(P + 64H + 1536L), comparison O(L^2 * 1536).
+    Row contrast storage is packed uint16 (<=2P bytes) plus O(H) row metadata;
+    signatures O(1536L). No per-pixel Python tuple/int graph is retained.
     """
     w, h, channels, rows = png
     left, top, right, bottom = box
     left, top = max(0, int(math.ceil(left))), max(0, int(math.ceil(top)))
     right, bottom = min(w, int(right)), min(h, int(bottom))
     require(right > left and bottom > top, 'Empty Quran raster bounds')
-    ink = []
+    require(len(background) == 3 and all(type(v) is int and 0 <= v <= 255 for v in background),
+            'Invalid raster background')
+    base = sum(background)
+    groups = []
     for y in range(top, bottom):
         row = rows[y]
-        points = [x for x in range(left, right) if max(row[x * channels:x * channels + 3]) < 110
-                  and (channels == 3 or row[x * channels + 3] > 200)]
-        if points:
-            ink.append((y, points))
-    groups = []
-    for y, points in ink:
-        if not groups or y - groups[-1][-1][0] > gap:
-            groups.append([])
-        groups[-1].append((y, points))
+        contrast = array('H', (max(0, base - sum(row[x * channels:x * channels + 3]))
+                              if channels == 3 or row[x * channels + 3] > 200 else 0
+                              for x in range(left, right)))
+        mass = sum(contrast)
+        if mass:
+            if not groups or y - groups[-1][-1][0] > gap:
+                groups.append([])
+            groups[-1].append((y, contrast, mass))
     result = []
+    clip_top, clip_bottom = clipped if isinstance(clipped, tuple) else (clipped, clipped)
     for group in groups:
         y1, y2 = group[0][0], group[-1][0] + 1
-        clip_top, clip_bottom = clipped if isinstance(clipped, tuple) else (clipped, clipped)
         if (clip_top and y1 <= top + gap) or (clip_bottom and y2 >= bottom - gap):
             continue
-        if y2 - y1 < gap:  # isolated punctuation/noise isn't a complete line
+        if y2 - y1 < gap:
             continue
         require(len(result) < RASTER_LINE_LIMIT, 'Quran raster line budget exceeded')
+        profile = [(y, mass) for y, _, mass in group]
+        low, high = mass_coordinate(profile, .01), mass_coordinate(profile, .99)
+        require(high > low, 'Empty ink support')
         signature = [0.] * (64 * 24)
-        xweights = pixel_bin_weights(right - left, 64)
-        yweights = pixel_bin_weights(y2 - y1, 24)
-        for y, points in group:
-            for x in points:
-                for iy, wy in yweights[y - y1]:
-                    for ix, wx in xweights[x - left]:
-                        signature[iy * 64 + ix] += wx * wy
-        norm = math.sqrt(sum(v * v for v in signature))
+        for y, contrast, _ in group:
+            yweights = row_bin_weights(y, low, high)
+            horizontal = column_ink(contrast)
+            for iy, wy in yweights:
+                for ix, value in enumerate(horizontal):
+                    signature[iy * 64 + ix] += value * wy
+        norm = math.sqrt(math.fsum(v * v for v in signature))
         require(norm > 0, 'Empty ink signature')
-        result.append({'bounds': [left, y1, right, y2],
+        result.append({'bounds': [left, y1, right, y2], 'mass_support': [low, high],
                        'signature': [v / norm for v in signature]})
     return result
 
@@ -483,7 +527,7 @@ def line_diagnostics(observed, exported):
     require(max(len(observed), len(exported)) <= RASTER_LINE_LIMIT, 'Quran raster line budget exceeded')
     diagnostics = []
     for line in observed:
-        scores = [sum(a * b for a, b in zip(line['signature'], target['signature']))
+        scores = [math.fsum(a * b for a, b in zip(line['signature'], target['signature']))
                   for target in exported]
         index = max(range(len(scores)), key=scores.__getitem__)
         diagnostics.append({'line': index, 'cosine': scores[index],
@@ -519,6 +563,16 @@ class ReaderChecks:
         self.d.ADB = self.adb
         self.d.OUT = self.n.OUT = OUT
         self.raw_dump = self.d.dump
+        self.raw_shell = self.d.sh
+        self._observation = None
+        self.observation_reuses = 0
+        self.observation_log = (OUT / 'observation-uses.jsonl').open('w')
+        # device_navigation imported several helper functions by value. Bind
+        # its shell and dump too, so those consumers cannot bypass observation
+        # invalidation/tracing. No public helper or Android transport is changed.
+        self.d.sh = self.n.sh = self.shell
+        self.n.dump = self.dump
+        self.d.find = self.n.find = self.find
         self.helper_hashes = {module: digest(Path(importlib.import_module(module).__file__).read_bytes())
                               for module in ('device_ui', 'device_navigation')}
         self.trace = gzip.open(OUT / 'states.jsonl.gz', 'wt', encoding='utf-8')
@@ -537,6 +591,7 @@ class ReaderChecks:
 
     def save(self):
         self.report['states'] = self.state_count
+        self.report['observation_reuses'] = self.observation_reuses
         temporary = OUT / 'reader-result.tmp'
         temporary.write_text(json.dumps(self.report, ensure_ascii=False, indent=2) + '\n')
         temporary.replace(OUT / 'reader-result.json')
@@ -557,10 +612,56 @@ class ReaderChecks:
                                      'stage': getattr(self, 'stage', 'unassigned'),
                                      'xml': ET.tostring(root, encoding='unicode')}, ensure_ascii=False) + '\n')
         self.trace.flush()
+        self._observation = (root, self.state_count, time.monotonic())
         return root
 
+    def shell(self, *args, **kwargs):
+        # Conservative: ANY shell boundary invalidates, including reads and
+        # failures. All actual inputs/settings/lifecycle commands use this
+        # owner in both shared helpers. Direct subprocess calls only read PNGs.
+        self._observation = None
+        return self.raw_shell(*args, **kwargs)
+
+    def observe(self, name=None):
+        """Reuse one immediate read-only observation, never a fresh-state claim.
+
+        A 100ms lease bounds synchronous assertion chains; it never paces a
+        poll or replaces a post-input read. Poll/traversal iterations and PNG
+        capture always call dump(). Loading also expires the lease. Reuses
+        retain the ORIGINAL state ID and XML hash, separately from fresh dumps.
+        """
+        import xml.etree.ElementTree as ET
+        require(time.monotonic() < self.deadline, 'Reader check exceeded 40 minute budget')
+        cached = getattr(self, '_observation', None)
+        if cached is None or time.monotonic() - cached[2] > .1:
+            return self.dump(name)
+        root, state, _ = cached
+        if any('جارٍ فتح' in self.d.label(n) or 'جارٍ حفظ اختيار المفسر' in self.d.label(n)
+               for n in root.iter('node')):
+            return self.dump(name)
+        xml = ET.tostring(root, encoding='utf-8')
+        if name:
+            (OUT / (name + '.xml')).write_bytes(xml)
+        self.observation_reuses = getattr(self, 'observation_reuses', 0) + 1
+        uses = getattr(self, 'observation_log', None)
+        if uses is not None:
+            uses.write(json.dumps({'state': state, 'xml_sha256': digest(xml),
+                                   'use_monotonic': time.monotonic(), 'name': name,
+                                   'fresh_dump': False}) + '\n')
+            uses.flush()
+        return root
+
+    def find(self, query, root=None, exact=False):
+        # Shared device_ui.wait polls every250ms, beyond the100ms observation
+        # lease. Its first same-state read can share provenance; later polls
+        # MUST acquire fresh XML. Explicit roots (e.g. raster pairs) stay exact.
+        if root is None:
+            root = self.observe()
+        return next((node for _, node, _ in self.visible_nodes(root)
+                     if self.d.label(node) == query or (not exact and query in self.d.label(node))), None)
+
     def capture(self, name, png=True):
-        root = self.dump(name)
+        root = self.dump(name) if png else self.observe(name)
         if png:
             (OUT / (name + '.png')).write_bytes(subprocess.check_output(
                 self.adb + ['exec-out', 'screencap', '-p'], timeout=35))
@@ -629,8 +730,10 @@ class ReaderChecks:
         gestures, progress = [], ScrollProgress()
         loading_deadline = None
         reason = 'commanded scroll distance budget exhausted'
+        first = True
         while True:
-            root = self.dump()
+            root = self.observe() if first else self.dump()
+            first = False
             rows = self.visible_rows(root)
             labels = [raw for _, _, raw in rows]
             require(not any(text.startswith(('تعذّر', 'لم يُعثر')) or text == 'إعادة المحاولة'
@@ -723,8 +826,8 @@ class ReaderChecks:
         traversal = TextTraversal(expected, frame_limit, allowed, ltr)
         progress = ScrollProgress()
         loading_deadline = None
-        for _ in range(frame_limit):
-            root = self.dump()
+        for frame in range(frame_limit):
+            root = self.observe() if frame == 0 else self.dump()
             rows = self.visible_rows(root)
             labels = [raw for _, _, raw in rows]
             if traversal.observe(labels, [i for i, _, _ in rows], state=self.state_count):
@@ -1019,14 +1122,16 @@ class ReaderChecks:
                    'xml_sha256': digest(xml), 'quran_bounds': box, 'gap': gap,
                    'clipped': clipped, 'timing': timing,
                    'atomicity': 'sequential XML then screencap; live changes between them are possible',
-                   'method': '64x24 dark-pixel area overlap, L2; cosine >=0.94',
+                   'method': '64x24 optical ink, fractional 1/99 mass coordinates, L2; cosine >=0.94',
                    'export_bounds': [line['bounds'] for line in exported]}
         path = OUT / 'long-raster-checked.json'
         path.write_text(json.dumps(details, indent=2))
         decoded = read_png(screen)
-        visible = ink_lines(decoded, box, gap=gap, clipped=clipped)
+        visible = ink_lines(decoded, box, gap=gap, clipped=clipped, background=RASTER_BACKGROUND)
         details.update(state='computed-before-validation', dimensions=decoded[:2],
-                       lines=line_diagnostics(visible, exported) if visible else [])
+                       lines=line_diagnostics(visible, exported) if visible else [],
+                       screen_mass_support=[line['mass_support'] for line in visible],
+                       export_mass_support=[line['mass_support'] for line in exported])
         path.write_text(json.dumps(details, indent=2))
         return checked_line_matches(details['lines']) if visible else []
 
@@ -1037,7 +1142,7 @@ class ReaderChecks:
         # header top 64/3dp +48dp, prose top18dp; footer48dp+43/3dp,
         # prose bottom14dp. These describe the provisional candidate only.
         exported = ink_lines(png, (128 / 3, (64 / 3 + 48 + 18) * 2,
-                                   w - 128 / 3, h - (48 + 43 / 3 + 14) * 2), gap=8)
+                                   w - 128 / 3, h - (48 + 43 / 3 + 14) * 2), gap=8, background=RASTER_BACKGROUND)
         require(len(exported) >= 20, 'Long export is missing expected Quran lines')
         self.seek('العودة إلى اختيار القراءة', up=False, exact=True)
         matches, traversal = [], RasterTraversal(len(exported))
@@ -1078,7 +1183,7 @@ class ReaderChecks:
             time.sleep(.2)
         details = {'export_line_count': len(exported), 'matched_lines': sorted(traversal.seen), 'frames': matches,
                    'ayah_end_observed': traversal.end_observed,
-                   'method': 'complete visible Quran line 64x24 dark-pixel area overlap vs full PNG, cosine >=0.94; no OCR/original-template claim'}
+                   'method': 'complete visible Quran line 64x24 optical ink, fractional mass coordinates vs full PNG, cosine >=0.94; no OCR/original-template claim'}
         (OUT / 'long-raster-metrics.json').write_text(json.dumps(details, indent=2))
         traversal.finish()
         self.reader('2:282')
@@ -1218,6 +1323,7 @@ class ReaderChecks:
             if len(restored) == len(SETTINGS) and restored == self.initial:
                 self.passed('settings-restored', actual_readback=restored)
             self.trace.close()
+            self.observation_log.close()
             covered = {c['name'] for c in self.report['checks']}
             self.report['missing_checks'] = sorted(set(REQUIRED) - covered)
             self.report['status'] = 'passed' if not self.report['errors'] and not self.report['missing_checks'] else 'failed'
