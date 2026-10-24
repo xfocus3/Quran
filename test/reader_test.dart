@@ -106,6 +106,10 @@ void main() {
       QuranCatalog.asset,
       cache: false,
     );
+    await (FontLoader('quranlyReaderIcons')..addFont(
+          rootBundle.load('.local/reader/MaterialIcons-Regular.otf'),
+        ))
+        .load();
     await (FontLoader('madina2')..addFont(
           rootBundle.load('.local/handoff/app/UthmanicHafs1_Ver16.ttf'),
         ))

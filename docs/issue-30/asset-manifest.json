@@ -3,14 +3,9 @@
   "database_sha256": "5f1e9cc30779a2a4b749de2f8bd4548b4fd7ca09a23457a44e6fea878bbc5dec",
   "files": [
     {
-      "output": "arrow-left.png",
-      "member": "assets/flutter_assets/assets/images/left%20arrow.png",
-      "sha256": "2a67535655463545e9db6b9a134af2507d3fe50be1e87c924df25cc831944435"
-    },
-    {
-      "output": "arrow-right.png",
-      "member": "assets/flutter_assets/assets/images/right%20arrow.png",
-      "sha256": "9853ae6927caeac9b1522bbd993e037f4b2c6bcaed9d62ccdb0020c0ce2311b3"
+      "output": "MaterialIcons-Regular.otf",
+      "member": "assets/flutter_assets/fonts/MaterialIcons-Regular.otf",
+      "sha256": "409ed9ef357f7ae8cf9cf1b6e0290b4eb708a2c6aeaa22df15558408fbd76520"
     },
     {
       "output": "background.png",

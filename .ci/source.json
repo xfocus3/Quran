@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "candidate_commit": "6fa30eafd0182a8ba10ebdc5685d88b597b125ba",
+  "candidate_commit": "0ae2d79f1c51b196961ac1ae88f3788f585e3d54",
   "candidate_accepted": false,
   "files": {
     ".nvmrc": "4c42fb8d6334c5cdcac68b93f96c581fb83b1f58cda898cff115e5e941ef717d",
@@ -31,7 +31,7 @@
     "android/gradle.properties": "cdb7cb4a27eb7621b91ec095ee9671a27eda35ef3140fb2c5394f83aad6fcad8",
     "android/gradle/wrapper/gradle-wrapper.properties": "297c9e63b6fa6e7e8b221900fa1787c1a0e38869d8957da66389fd0f6b00f78e",
     "android/settings.gradle.kts": "a9b5756048f668d4ebf355116678fd334cd5f2169b7d4518ad19b8df14d3af36",
-    "docs/issue-30/asset-manifest.json": "3aa3866af194318fece65b53c14dca2118fc1754bb3a1f789519bb5e8a50e44e",
+    "docs/issue-30/asset-manifest.json": "2b85601df5ed9b2dbc741acac4400704e873f571195480cf8302f6ec881cf470",
     "docs/phase-1/artifact-manifest.json": "ff1a566caf24f64d8e97857f6f7fb8abccc6c6c313f2b9aebd2edef5f3bb6dfa",
     "docs/phase-3/content-contract.json": "87180c05f9c32f0692ad749745567aa69aa2eaca908b4a31ef6e3ce1be4e8577",
     "docs/phase-4/content-contract.json": "3fbe495e69f32a2f39f47c6e0723418855cd7f5a3b994151da9e60de9862bcc8",
@@ -42,24 +42,24 @@
     "lib/reader.dart": "a94d432b3e17cfb82080a991ea913a1c88d980803e45c8baf5976c057b50f8a1",
     "lib/reader_metadata.dart": "6293516dd355df39b46ba79df7f8856d983fdfab1f6ddd1690c9f6b34a2a1dd1",
     "lib/reader_share.dart": "9391bc83ec747a7f6efd457d16898d3ca7abb29335cdfdba91ed6eb393aec369",
-    "lib/reader_view.dart": "1653050cd7964486d871e9adf95c36a1ca1529f1963b932971d9391f0b9c2c15",
+    "lib/reader_view.dart": "0c725c1fa36ad804cd48818a16fae779775fe5100400ce89447ef6a943258860",
     "lib/tafsir.dart": "9dcb859d747ab5c2da0444cee3ea0aa09aac71aa885ebf7f1acef13bd812e664",
     "lib/tafsir_session.dart": "e660192f01e1606bbbd33bfa4d67cf7751c90d4b026ed35463c7b618bd289691",
     "lib/tafsir_view.dart": "dd731b28e9491aa77f464f7e2186dc597a60d4dc494b09d397924ac5bedcbe5b",
     "pubspec.lock": "cfc3765c17ffd7e45a195aa3c4682856e5437b37ca9c1bfd40fa0988a2e29232",
-    "pubspec.yaml": "1288dd03375bc446ce21d83d0b377d9c65b4bf32896bc12f407e58c5cf8b8dbb",
+    "pubspec.yaml": "ef354e5111e24f0a7ecafa74bc13b55d6e5b36198598f5e8b1c463aa11c5fbe4",
     "test/actions_test.dart": "96c01a816412d2ebcf81337907b35729b04c06345895260b4075273759afcbcb",
     "test/content_test.dart": "45c5c5fc9c26cf1fc4e023bf34e42f7221a3bbf92d62071feaef4d41cf4ebf33",
     "test/passage_picker_test.dart": "c709e24e37fca1689a036f9fb687e83bd9e2285cfbb462909cdaab9081588df6",
     "test/phase4_test.dart": "b4bc93747d662be35b84449abce3bec415c6c1434be2373f223859f5cb08202b",
     "test/reader_metadata_test.dart": "94d36e04a0a86fa88a2634b4829ed54f1c6eb9d6e5e91c090663211657304367",
-    "test/reader_test.dart": "ba5a941959eee2215a2bf9632507b11601e6a07d566f99c20ef2d44c2832d176",
+    "test/reader_test.dart": "b2a4b0f0ce92f07dee800a1296d7b27e522f4803e9b585074427f7f2e16a33f0",
     "test/tafsir_test.dart": "85bc93e1037b8a2c5e5526ec14eaf455e801f7662eace5404defdc26e1babac5",
     "tests/java/TafsirDisplayProbe.java": "f63c8f5d8697cb645e7d577c1c7c367b34261803b420975066259618b985d391",
     "tests/test_artifacts.py": "12a04a903a4a3e4cfb48a0e208ac9e3bc5949033d60ac635505656dc904ae9e3",
     "tests/test_phase4.py": "ef99998025346b46a028031a75064a5af1d377cd597704056278f76577bb5ee3",
     "tests/test_tafsir_display.py": "d01564aa117c54f7a58bcc9fff658d5aefbf205945000da091a62c26b170e6cb",
     "tools/prepare_artifacts.py": "d249fb1f2569d50e411cfbe266d949a25bc2f18483e67a3fe4c8d7e8a0aeab0f",
-    "tools/prepare_reader_artifacts.py": "ba4a704dd95afd44deeb68bf0e4d632605d4bd3dffdc6b5b20853488a9df7f1f"
+    "tools/prepare_reader_artifacts.py": "9554e239f49eabdadf4b4bc6572423abe85b80b60226f3ae2c982459813650c6"
   }
 }

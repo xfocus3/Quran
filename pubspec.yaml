@@ -28,6 +28,9 @@ flutter:
     - .local/handoff/tafsir/SOURCE-DATA-NOTICE.txt
     - .local/handoff/tafsir/READ-FIRST.txt
   fonts:
+    - family: quranlyReaderIcons
+      fonts:
+        - asset: .local/reader/MaterialIcons-Regular.otf
     - family: madina2
       fonts:
         - asset: .local/handoff/app/UthmanicHafs1_Ver16.ttf

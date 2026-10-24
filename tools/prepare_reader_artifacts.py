@@ -76,6 +76,11 @@ def main():
                     raise ValueError('Original member identity mismatch')
                 (args.output / item['output']).write_bytes(data)
         (args.output / 'metadata.json').write_bytes(metadata)
+    # The whole directory is a Flutter asset entry. Reject stale presentation
+    # files, including superseded raster arrows, rather than bundling them.
+    expected_files = {item['output'] for item in manifest['files']} | {'metadata.json'}
+    if {path.name for path in args.output.iterdir()} != expected_files:
+        raise ValueError('Prepared presentation file set differs from manifest')
     for item in manifest['files']:
         if digest(args.output / item['output']) != item['sha256']:
             raise ValueError('Prepared member identity mismatch')

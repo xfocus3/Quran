@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "url": "https://github.com/xfocus3/Quran/releases/download/ci-inputs-v1/inputs.enc",
+  "url": "https://github.com/xfocus3/Quran/releases/download/ci-inputs-v2/inputs.enc",
   "files": {
     ".local/handoff/app/UthmanicHafs1_Ver16.ttf": "b7713e2da7daec35c9bd99076bcc40e59310d5ecb88055aaa718fbc647015bf2",
     ".local/handoff/app/arabic-three-tafsirs.sqlite": "2422b6e57acb21184e14c15a86b36b23e58a140c78e3e7a17b45863524fb9150",
@@ -35,8 +35,7 @@
     ".local/handoff/tafsir/tabary-context-ranges.json": "6ebe2612e921e548630f5c67fa06cfb12ee7367d1b9e838ac7c811a5fa2f1844",
     ".local/reader/Inter-Regular.ttf": "41ab0f707a2bfab8133ccdfcdab52282f5f79e5751f43a264805451c7bb95fb8",
     ".local/reader/Inter-SemiBold.ttf": "e8cbc2b88bc4268237ff5e251776d3c54edcb14e015a9e66e4883bde4b55f13f",
-    ".local/reader/arrow-left.png": "2a67535655463545e9db6b9a134af2507d3fe50be1e87c924df25cc831944435",
-    ".local/reader/arrow-right.png": "9853ae6927caeac9b1522bbd993e037f4b2c6bcaed9d62ccdb0020c0ce2311b3",
+    ".local/reader/MaterialIcons-Regular.otf": "409ed9ef357f7ae8cf9cf1b6e0290b4eb708a2c6aeaa22df15558408fbd76520",
     ".local/reader/background.png": "aac5eb3908e0a9703488d2ebdcdee16274abbba9f57aa5dedc1f6d7e4cba3e70",
     ".local/reader/bookmark.svg": "952c5730694f86234195159e55d2855f5f5025ada408d885964ea0505c301194",
     ".local/reader/download.svg": "9bb7d89723e4868877756f08d90bf9c507f0f0c01f886f70f85d861a4d46922a",
@@ -50,5 +49,5 @@
     ".local/reader/share.svg": "8976c5b5b019ae159fe5e56b4ffd419760a18c2ec4fdb675b1745be983a02064",
     ".local/reader/tafsir.svg": "e7e50f48fa24a4dd6a738713fff992d348941956425a67814ee2297ed986f7bb"
   },
-  "archive_sha256": "121492f23730e2e5faf99745234359eed5f307e0566284ab1dafd608276d2d28"
+  "archive_sha256": "3ffa99870f6d167bd7b1120da5e63c0714b2ced18d92fff06b80fa9011cf8a0b"
 }

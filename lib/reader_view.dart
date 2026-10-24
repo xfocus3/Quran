@@ -147,22 +147,16 @@ class _ReaderViewState extends State<ReaderView> {
         icon: icon,
       );
 
-  // Original 18×20 raster stems; preserve the existing icon slot/target and
-  // scale only the paint. Tint at this boundary, never alter recovered bytes.
-  Widget _arrow({bool forward = false, Color color = Colors.white}) => SizedBox(
-    width: 28,
-    height: 28,
-    child: Center(
-      child: Transform.translate(
-        offset: const Offset(0, 2 / 3),
-        child: Image.asset(
-          '.local/reader/arrow-${forward ? 'right' : 'left'}.png',
-          width: 50 / 3,
-          height: 500 / 27,
-          color: color,
-          excludeFromSemantics: true,
-        ),
-      ),
+  // Rounded stems from the original subset, not the SDK's Material font.
+  // The 25dp paint size follows the retained full glyph; device comparison is
+  // pending. Keep the slot/targets independent of paint and button semantics.
+  static const _backArrow = IconData(0xf572, fontFamily: 'quranlyReaderIcons');
+  static const _forwardArrow = IconData(0xf57a, fontFamily: 'quranlyReaderIcons');
+
+  Widget _arrow(IconData glyph, {required Color color}) => ExcludeSemantics(
+    child: SizedBox.square(
+      dimension: 28,
+      child: Icon(glyph, size: 25, color: color),
     ),
   );
 
@@ -183,6 +177,7 @@ class _ReaderViewState extends State<ReaderView> {
       child: Semantics(
         label: 'الآية السابقة',
         child: _arrow(
+          _backArrow,
           color: _reader.previous == null ? Colors.white54 : Colors.white,
         ),
       ),
@@ -206,7 +201,7 @@ class _ReaderViewState extends State<ReaderView> {
       child: Semantics(
         label: 'الآية التالية',
         child: _arrow(
-          forward: true,
+          _forwardArrow,
           color: _reader.next == null ? Colors.white54 : readerInk,
         ),
       ),
@@ -735,7 +730,9 @@ class _ReaderViewState extends State<ReaderView> {
                     border: Border.all(color: readerCard),
                     borderRadius: BorderRadius.circular(30),
                   ),
-                  child: Center(child: _arrow()),
+                  child: Center(
+                    child: _arrow(_backArrow, color: Colors.white),
+                  ),
                 ),
               ),
             ),
