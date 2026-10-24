@@ -147,9 +147,14 @@ class _ReaderViewState extends State<ReaderView> {
         icon: icon,
       );
 
-  // Rounded stems from the original subset, not the SDK's Material font.
+  // Role-specific stems from the original subset, not the SDK's Material font:
+  // square terminals for header Back, rounded terminals for ayah navigation.
   // The 25dp paint size follows the retained full glyph; device comparison is
   // pending. Keep the slot/targets independent of paint and button semantics.
+  static const _headerBackArrow = IconData(
+    0xe092,
+    fontFamily: 'quranlyReaderIcons',
+  );
   static const _backArrow = IconData(0xf572, fontFamily: 'quranlyReaderIcons');
   static const _forwardArrow = IconData(0xf57a, fontFamily: 'quranlyReaderIcons');
 
@@ -734,7 +739,7 @@ class _ReaderViewState extends State<ReaderView> {
                     borderRadius: BorderRadius.circular(30),
                   ),
                   child: Center(
-                    child: _arrow(_backArrow, color: readerLightControl),
+                    child: _arrow(_headerBackArrow, color: readerLightControl),
                   ),
                 ),
               ),

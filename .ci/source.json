@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "candidate_commit": "1dd2c033b897e4362b7a15668a6d0fcc2aaa3266",
+  "candidate_commit": "cd84f46f44fea690c65a9dd9847b38bc82a7a300",
   "candidate_accepted": false,
   "files": {
     ".nvmrc": "4c42fb8d6334c5cdcac68b93f96c581fb83b1f58cda898cff115e5e941ef717d",
@@ -42,7 +42,7 @@
     "lib/reader.dart": "a94d432b3e17cfb82080a991ea913a1c88d980803e45c8baf5976c057b50f8a1",
     "lib/reader_metadata.dart": "6293516dd355df39b46ba79df7f8856d983fdfab1f6ddd1690c9f6b34a2a1dd1",
     "lib/reader_share.dart": "9391bc83ec747a7f6efd457d16898d3ca7abb29335cdfdba91ed6eb393aec369",
-    "lib/reader_view.dart": "856ebc8aed162a1f03e483ed164615bf9f8105536a495acec7c2ecf20c958b17",
+    "lib/reader_view.dart": "afca22c59b02021c7285061dbbbbecdc5382079a180f3cee8a77a9504fd3f08b",
     "lib/tafsir.dart": "9dcb859d747ab5c2da0444cee3ea0aa09aac71aa885ebf7f1acef13bd812e664",
     "lib/tafsir_session.dart": "e660192f01e1606bbbd33bfa4d67cf7751c90d4b026ed35463c7b618bd289691",
     "lib/tafsir_view.dart": "dd731b28e9491aa77f464f7e2186dc597a60d4dc494b09d397924ac5bedcbe5b",
