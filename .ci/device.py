@@ -11,6 +11,7 @@ import traceback
 from emulator_diagnostics import capture
 from emulator_profile import PHYSICAL_SIZE, PHYSICAL_DENSITY
 from prepare_emulator import prepare
+from reader import REQUIRED as READER_CHECKS
 
 OUT = Path('.ci/out/device')
 OUT.mkdir(parents=True, exist_ok=True)
@@ -101,6 +102,23 @@ def main():
     with (OUT / 'probe-build.log').open('w') as log:
         subprocess.run(['bash', '.ci/build_probe.sh'], stdout=log, stderr=subprocess.STDOUT, check=True)
     run(*adb, 'install', '-r', '-t', '.ci/out/probe/probe.apk')
+    # Reader touch/clipboard/export checks run with accessibility disabled and
+    # deterministic personal state, before the separate real TalkBack sequence.
+    shell('pm', 'clear', 'com.xfocus.quranly.local')
+    with (OUT / 'reader.log').open('w') as log:
+        subprocess.run([sys.executable, '.ci/reader.py'], stdout=log, stderr=subprocess.STDOUT,
+                       check=True, timeout=2520)  # 40-minute harness plus bounded cleanup.
+    reader_path = OUT / 'reader/reader-result.json'
+    reader = json.loads(reader_path.read_text())
+    if (reader.get('status') != 'passed' or reader.get('source_commit') != os.environ['GITHUB_SHA'] or
+            reader.get('api') != api or reader.get('required_checks') != list(READER_CHECKS) or
+            [row.get('name') for row in reader.get('checks', [])] != list(READER_CHECKS) or
+            any(row.get('status') != 'passed' for row in reader.get('checks', [])) or
+            reader.get('errors') != [] or reader.get('missing_checks') != []):
+        raise ValueError('Reader construction checks incomplete')
+    result['reader'] = {'status': reader['status'], 'checks': list(READER_CHECKS),
+                        'receipt_sha256': hashlib.sha256(reader_path.read_bytes()).hexdigest()}
+    require_healthy_android('after-reader')
     events = shell('getevent', '-pl')
     keyboard = re.search(r'add device \d+: (\S+)\s+name:\s+"AT Translated Set 2 keyboard"', events)
     if keyboard is None:
@@ -149,4 +167,4 @@ finally:
 if not result['passed']:
     print('::error::Device checks failed; inspect encrypted device-result.json')
     sys.exit(1)
-print(f"Android API {result['api']}: native contracts and 13 real TalkBack checks passed")
+print(f"Android API {result['api']}: native contracts, 15 reader and 13 real TalkBack checks passed")

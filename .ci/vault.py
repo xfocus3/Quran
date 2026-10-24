@@ -12,7 +12,11 @@ from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
 HEADER = b'QURAN-CI-1\n'
 MAX_ARCHIVE = 512 * 1024 * 1024
-MAX_EXPANDED = 1024 * 1024 * 1024
+# Measured API35/36 bundles are 1,062,779,214 / 1,063,040,585 bytes
+# before the wider reader captures. Keep 1.25 GiB expansion / 512 MiB sealed
+# bounds rather than failing collection at the previous bundle's ~10 MiB margin.
+MAX_EXPANDED = 1280 * 1024 * 1024
+MAX_MEMBERS = 10000
 
 
 def seal(data, key):
@@ -46,7 +50,7 @@ def extract(data, destination):
                 raise ValueError('Unsafe archive member')
             seen.add(member.name)
             total += member.size
-            if total > MAX_EXPANDED or len(members) > 10000:
+            if total > MAX_EXPANDED or len(members) > MAX_MEMBERS:
                 raise ValueError('Expanded archive exceeds bound')
         if destination.exists():
             raise ValueError('Extraction requires a new destination')
@@ -63,13 +67,20 @@ def extract(data, destination):
 
 
 def pack(root):
+    files = []
+    total = 0
+    for path in sorted(root.rglob('*')):
+        if path.is_symlink():
+            raise ValueError('Refusing symlink in private pack')
+        if path.is_file():
+            files.append(path)
+            total += path.stat().st_size
+            if total > MAX_EXPANDED or len(files) > MAX_MEMBERS:
+                raise ValueError('Expanded archive exceeds bound')
     output = io.BytesIO()
     with tarfile.open(fileobj=output, mode='w:gz') as archive:
-        for path in sorted(root.rglob('*')):
-            if path.is_symlink():
-                raise ValueError('Refusing symlink in private pack')
-            if path.is_file():
-                archive.add(path, arcname=str(path.relative_to(root)), recursive=False)
+        for path in files:
+            archive.add(path, arcname=str(path.relative_to(root)), recursive=False)
     return output.getvalue()
 
 

@@ -8,7 +8,10 @@ Implementation and independent review run locally through Sandcastle, using REA
 and retained evidence first. GitHub Actions runs the expensive deterministic
 checks on standard hosted Ubuntu runners: Flutter analysis/tests, complete
 prepared-data checks, APK builds, native Android instrumentation and real emulator
-accessibility navigation on API 35 and 36.
+reader and accessibility navigation on API 35 and 36. The reader suite covers
+three-author/source return, seven tafsir contexts, boundaries, exact Android
+clipboard Unicode, image chooser/cancellation and long-image completeness,
+offline lifecycle, and portrait/landscape controls at 2× text scale.
 
 This repository starts with a clean source snapshot. Private repository history,
 phone records, original APKs, credentials, signing keys and reference captures
@@ -26,7 +29,7 @@ signing and owner comparison remain separate checkpoints.
 
 Each guest completes image provisioning and reboots once before APK installation.
 First-boot diagnostics are retained, and the distinct test boot must have no ANR
-at startup or after TalkBack. Application checks are never retried into a pass.
+at startup, after reader checks and after TalkBack. Application checks are never retried into a pass.
 The small encrypted `device-*` artifact is uploaded before the larger encrypted
 `android-*` APK archive so failures can be inspected sooner.
 

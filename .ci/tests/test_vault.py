@@ -6,12 +6,28 @@ import sys
 import tarfile
 import tempfile
 import unittest
+from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import vault
 
 
 class VaultTest(unittest.TestCase):
+    def test_pack_rejects_total_expansion_before_encrypting_or_uploading(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / 'a').write_bytes(b'123456')
+            (root / 'b').write_bytes(b'123456')
+            with patch.object(vault, 'MAX_EXPANDED', 8):
+                with self.assertRaisesRegex(ValueError, 'Expanded archive exceeds bound'):
+                    vault.pack(root)
+            with patch.object(vault, 'MAX_EXPANDED', 12):
+                packed = vault.pack(root)
+                destination = root / 'restored'
+                vault.extract(packed, destination)
+                self.assertEqual((destination / 'a').read_bytes(), b'123456')
+                self.assertEqual((destination / 'b').read_bytes(), b'123456')
+
     def test_verify_rejects_links_even_inside_the_root(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

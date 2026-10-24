@@ -1,0 +1,694 @@
+"""Hosted reader construction checks. Run as python3 .ci/reader.py before TalkBack.
+
+Only the controller runs this against an installed candidate and installed QA
+probe. Sibling device_ui/device_navigation are the public CI helpers. No Android
+SDK, Pillow, host paths or original captures are needed. Outputs are private.
+"""
+import gzip
+import hashlib
+import importlib
+import json
+import math
+import os
+from pathlib import Path
+import re
+import struct
+import subprocess
+import sys
+import time
+import traceback
+import zlib
+
+OUT = Path('.ci/out/device/reader')
+PACKAGE = 'com.xfocus.quranly.local'
+AUTHORS = [('ibn_kathir', 'ابن كثير'), ('al_tabari', 'الطبري'), ('al_saadi', 'السعدي')]
+BOOK_TITLES = {'ibn_kathir': 'تفسير القرآن العظيم', 'al_tabari': 'جامع البيان عن تأويل آي القرآن',
+               'al_saadi': 'تيسير الكريم الرحمن في تفسير كلام المنان'}
+SETTINGS = [('system', k) for k in ('font_scale', 'user_rotation', 'accelerometer_rotation')]
+REQUIRED = (
+    'offline-startup', 'three-author-27:59-source-return', 'seven-tabari-contexts',
+    'boundaries', 'clipboard-2:281', 'clipboard-2:282', 'share-27:59',
+    'share-27:59-repeat', 'share-2:282', 'long-export-raster-complete',
+    'background-location', 'force-stop-relaunch-location',
+    'portrait-2x-controls', 'landscape-2x-controls', 'settings-restored',
+)
+
+
+def require(condition, message):
+    if not condition:
+        raise AssertionError(message)
+
+
+def digest(data):
+    return hashlib.sha256(data).hexdigest()
+
+
+def clipboard_value(root):
+    fields = [n for n in root.iter('node') if n.get('class') == 'android.widget.EditText']
+    require(len(fields) == 1, 'Clipboard probe must expose exactly one text field')
+    return fields[0].get('text', '')
+
+
+def verify_clipboard(actual, canonical, key):
+    expected = canonical + '\n' + key
+    require(actual == expected, f'Android clipboard differs from canonical Unicode at {key}')
+    require(not any(0xe000 <= ord(c) <= 0xf8ff or 0xf0000 <= ord(c) <= 0xffffd or
+                    0x100000 <= ord(c) <= 0x10fffd for c in actual), 'Clipboard contains private-use glyphs')
+    return {'characters': len(actual), 'utf8_sha256': digest(actual.encode()), 'exact_match': True}
+
+
+def read_png(data):
+    """Decode bounded Android/Flutter RGB(A) PNGs; reject unsupported layouts.
+
+    Pixel rows support an independent full-export vs scrolled-screen ink check,
+    not OCR or a claim that the provisional template matches the original.
+    """
+    require(data[:8] == b'\x89PNG\r\n\x1a\n', 'Invalid PNG signature')
+    pos, compressed, size, channels = 8, bytearray(), None, None
+    ended = False
+    while pos + 12 <= len(data):
+        length, kind = struct.unpack('>I4s', data[pos:pos + 8])
+        body = data[pos + 8:pos + 8 + length]
+        require(len(body) == length and pos + length + 12 <= len(data), 'Truncated PNG chunk')
+        crc = struct.unpack('>I', data[pos + 8 + length:pos + 12 + length])[0]
+        require(zlib.crc32(kind + body) & 0xffffffff == crc, 'PNG CRC mismatch')
+        pos += length + 12
+        if kind == b'IHDR':
+            require(size is None and length == 13, 'Invalid PNG header')
+            w, h, depth, color, compression, filtering, interlace = struct.unpack('>IIBBBBB', body)
+            require(depth == 8 and color in (2, 6) and compression == filtering == interlace == 0,
+                    'Expected noninterlaced 8-bit RGB/RGBA PNG')
+            require(0 < w * h <= 32_000_000, 'PNG dimensions exceed native share contract')
+            size, channels = (w, h), 3 if color == 2 else 4
+        elif kind == b'IDAT':
+            compressed.extend(body)
+        elif kind == b'IEND':
+            ended = True
+            break
+    require(size is not None and ended and pos == len(data), 'Incomplete PNG')
+    w, h = size
+    stride = w * channels
+    decoder = zlib.decompressobj()
+    raw = decoder.decompress(compressed, (stride + 1) * h + 1)
+    require(decoder.eof and not decoder.unused_data and len(raw) == (stride + 1) * h,
+            'PNG decompressed size mismatch')
+    rows, previous = [], bytearray(stride)
+    for y in range(h):
+        start = y * (stride + 1)
+        method = raw[start]
+        row = bytearray(raw[start + 1:start + 1 + stride])
+        require(method <= 4, 'Invalid PNG row filter')
+        if method:
+            for i in range(stride):
+                left = row[i - channels] if i >= channels else 0
+                up = previous[i]
+                corner = previous[i - channels] if i >= channels else 0
+                if method == 1:
+                    predictor = left
+                elif method == 2:
+                    predictor = up
+                elif method == 3:
+                    predictor = (left + up) // 2
+                else:
+                    p = left + up - corner
+                    a, b, c = abs(p - left), abs(p - up), abs(p - corner)
+                    predictor = left if a <= b and a <= c else up if b <= c else corner
+                row[i] = (row[i] + predictor) & 255
+        rows.append(row)
+        previous = row
+    return w, h, channels, rows
+
+
+def ink_lines(png, box, gap, clipped=False):
+    """64x24 ink-density signatures of complete Quran lines, in source order.
+
+    Only dark pixels are compared; antialiasing and the 2x export / actual
+    device-density scale differ. Bounds come from actual Android Quran semantics
+    for screens, and the current source card contract for the export.
+    """
+    w, h, channels, rows = png
+    left, top, right, bottom = box
+    left, top = max(0, int(math.ceil(left))), max(0, int(math.ceil(top)))
+    right, bottom = min(w, int(right)), min(h, int(bottom))
+    require(right > left and bottom > top, 'Empty Quran raster bounds')
+    ink = []
+    for y in range(top, bottom):
+        row = rows[y]
+        points = [x for x in range(left, right) if max(row[x * channels:x * channels + 3]) < 110
+                  and (channels == 3 or row[x * channels + 3] > 200)]
+        if points:
+            ink.append((y, points))
+    groups = []
+    for y, points in ink:
+        if not groups or y - groups[-1][-1][0] > gap:
+            groups.append([])
+        groups[-1].append((y, points))
+    result = []
+    for group in groups:
+        y1, y2 = group[0][0], group[-1][0] + 1
+        clip_top, clip_bottom = clipped if isinstance(clipped, tuple) else (clipped, clipped)
+        if (clip_top and y1 <= top + gap) or (clip_bottom and y2 >= bottom - gap):
+            continue
+        if y2 - y1 < gap:  # isolated punctuation/noise isn't a complete line
+            continue
+        signature = [0] * (64 * 24)
+        for y, points in group:
+            for x in points:
+                signature[min(23, (y - y1) * 24 // (y2 - y1)) * 64 +
+                          min(63, (x - left) * 64 // (right - left))] += 1
+        norm = math.sqrt(sum(v * v for v in signature))
+        require(norm > 0, 'Empty ink signature')
+        result.append({'bounds': [left, y1, right, y2],
+                       'signature': [v / norm for v in signature]})
+    return result
+
+
+def match_lines(observed, exported):
+    require(observed and exported, 'No complete Quran ink lines to compare')
+    matches = []
+    for line in observed:
+        scores = [sum(a * b for a, b in zip(line['signature'], target['signature']))
+                  for target in exported]
+        index = max(range(len(scores)), key=scores.__getitem__)
+        require(scores[index] >= .94, f'Screen Quran line absent/different in export: best={scores[index]:.4f}')
+        matches.append({'line': index, 'cosine': round(scores[index], 5), 'screen_bounds': line['bounds']})
+    require(all(a['line'] < b['line'] for a, b in zip(matches, matches[1:])),
+            'Export Quran line order differs from the scrolled screen')
+    return matches
+
+
+class ReaderChecks:
+    def __init__(self):
+        # No default device discovery or fallback serial, including in helpers.
+        serial = os.environ['QURAN_CI_SERIAL']
+        require(bool(re.fullmatch(r'emulator-\d+', serial)), 'Expected controller-owned hosted emulator serial')
+        self.adb = ['adb', '-s', serial]
+        self.d = importlib.import_module('device_ui')
+        self.n = importlib.import_module('device_navigation')
+        self.d.ADB = self.adb
+        self.d.OUT = self.n.OUT = OUT
+        self.raw_dump = self.d.dump
+        self.helper_hashes = {module: digest(Path(importlib.import_module(module).__file__).read_bytes())
+                              for module in ('device_ui', 'device_navigation')}
+        self.trace = gzip.open(OUT / 'states.jsonl.gz', 'wt', encoding='utf-8')
+        self.state_count = 0
+        self.deadline = time.monotonic() + 2400
+        self.d.dump = self.dump
+        self.d.seek = self.seek
+        self.report = {'schema': 1, 'status': 'running', 'source_commit': os.environ['GITHUB_SHA'],
+                       'harness_sha256': digest(Path(__file__).read_bytes()),
+                       'scope': 'construction', 'finalParityAccepted': False,
+                       'finalOnlyGaps': [f'F29-00{i}' for i in range(1, 7)],
+                       'helper_sha256': self.helper_hashes,
+                       'required_checks': list(REQUIRED), 'checks': [], 'errors': [],
+                       'phone_access': False, 'no_recipient_selected': True}
+        self.initial = {}
+
+    def save(self):
+        self.report['states'] = self.state_count
+        temporary = OUT / 'reader-result.tmp'
+        temporary.write_text(json.dumps(self.report, ensure_ascii=False, indent=2) + '\n')
+        temporary.replace(OUT / 'reader-result.json')
+
+    def passed(self, name, **details):
+        require(name in REQUIRED and name not in [c['name'] for c in self.report['checks']],
+                'Unexpected/duplicate reader check: ' + name)
+        self.report['checks'].append({'name': name, 'status': 'passed', **details})
+        self.save()
+        print('PASS', name, flush=True)
+
+    def dump(self, name=None):
+        import xml.etree.ElementTree as ET
+        require(time.monotonic() < self.deadline, 'Reader check exceeded 40 minute budget')
+        root = self.raw_dump(name)
+        self.state_count += 1
+        self.trace.write(json.dumps({'state': self.state_count, 'monotonic': time.monotonic(),
+                                     'xml': ET.tostring(root, encoding='unicode')}, ensure_ascii=False) + '\n')
+        self.trace.flush()
+        return root
+
+    def capture(self, name, png=True):
+        root = self.dump(name)
+        if png:
+            (OUT / (name + '.png')).write_bytes(subprocess.check_output(
+                self.adb + ['exec-out', 'screencap', '-p'], timeout=35))
+        return root
+
+    def seek(self, query, up=True, exact=False, limit=70):
+        gestures = []
+        for _ in range(limit + 1):
+            root = self.dump()
+            # Android adds bidi embedding wrappers to LTR metadata labels.
+            # Strip wrappers only for control lookup; canonical Quran and the
+            # Android clipboard are always compared byte-for-byte below.
+            candidates = [n for n in root.iter('node') if
+                         (self.d.label(n).strip('\u202a\u202b\u202c\u202d\u202e\u2066\u2067\u2068\u2069') == query
+                          if exact else query in self.d.label(n))]
+            node = next((n for n in candidates if self.d.bounds(n)[2] > self.d.bounds(n)[0]
+                         and self.d.bounds(n)[3] > self.d.bounds(n)[1]), None)
+            if node is not None:
+                l, t, r, b = self.d.bounds(node)
+                if r > l and b > t:
+                    return node
+            scrolls = [n for n in root.iter('node') if n.get('scrollable') == 'true'
+                       and self.d.bounds(n)[3] - self.d.bounds(n)[1] > 120]
+            require(scrolls, 'No active scroll owner while seeking ' + query)
+            owner = max(scrolls, key=lambda n: (self.d.bounds(n)[2] - self.d.bounds(n)[0]) *
+                        (self.d.bounds(n)[3] - self.d.bounds(n)[1]))
+            l, t, r, b = self.d.bounds(owner)
+            # Small bounded steps keep wrapped author controls reachable in a
+            # landscape sheet, without gestures crossing its dismissal handle.
+            distance = min(250, (b - t) * .4)
+            middle = (b + t) / 2
+            low, high = int(middle + distance / 2), int(middle - distance / 2)
+            gestures.append([l, t, r, b, up])
+            self.d.sh('input', 'swipe', (l + r) // 2, low if up else high,
+                      (l + r) // 2, high if up else low, 450)
+            time.sleep(.15)
+        (OUT / 'unreachable.json').write_text(json.dumps({'query': query, 'gestures': gestures}))
+        raise AssertionError('Required UI target unreachable: ' + query)
+
+    def click(self, query, up=True, exact=True):
+        node = self.seek(query, up=up, exact=exact)
+        require(node.get('enabled') == 'true' and node.get('clickable') == 'true',
+                'Control lacks an enabled CLICK action: ' + query)
+        self.d.tap(node)
+
+    def back(self):
+        self.d.sh('input', 'keyevent', 'KEYCODE_BACK')
+        time.sleep(.4)
+
+    def reader(self, key, up=False):
+        node = self.seek('الآية ' + key + ' ', up=up)
+        require(self.d.label(node) == 'الآية ' + key + ' ' + self.canonical[key],
+                'Reader key/content differs from canonical ' + key)
+        return node
+
+    def jump(self, surah, ayah):
+        self.n.jump(surah, ayah)
+        return self.reader(f'{surah}:{ayah}')
+
+    def selected(self, author):
+        node = self.seek('اختيار تفسير ' + author, up=False, exact=True)
+        require(node.get('selected') == 'true', 'Wrong selected author: ' + author)
+
+    def ready_tafsir(self, book):
+        self.seek(BOOK_TITLES[book], up=False, exact=True)
+        deadline = time.monotonic() + 15
+        while time.monotonic() < deadline:
+            root = self.dump()
+            labels = [self.d.label(n) for n in root.iter('node') if self.d.label(n)]
+            require(not any('تعذّر' in text or 'لم يُعثر' in text for text in labels),
+                    'Tafsir UI reported a content/preference error')
+            if any('جارٍ فتح التفسير المحلي' in text or 'جارٍ حفظ اختيار المفسر' in text for text in labels):
+                time.sleep(.2)
+                continue
+            prose = [text for text in labels if len(text) > 50 and 'اختيار تفسير' not in text]
+            if prose:
+                return digest(prose[0].encode())
+            time.sleep(.2)
+        raise AssertionError('Tafsir UI did not show loaded source prose')
+
+    def set_settings(self, scale, rotation):
+        for key, value in [('accelerometer_rotation', '0'), ('user_rotation', str(rotation)), ('font_scale', str(scale))]:
+            self.d.sh('settings', 'put', 'system', key, value)
+            require(float(self.d.sh('settings', 'get', 'system', key).strip()) == float(value),
+                    'Settings write did not take effect: ' + key)
+        time.sleep(.8)
+
+    def verify_offline(self):
+        airplane = self.d.sh('settings', 'get', 'global', 'airplane_mode_on').strip()
+        wifi = self.d.sh('settings', 'get', 'global', 'wifi_on').strip()
+        data = self.d.sh('settings', 'get', 'global', 'mobile_data').strip()
+        connectivity = self.d.sh('dumpsys', 'connectivity')
+        (OUT / 'connectivity.txt').write_text(connectivity)
+        require(airplane == '1' and wifi == '0' and data == '0', 'Controller must provision offline Android')
+        require(re.search(r'Active default network:\s*(?:none|null)', connectivity, re.I),
+                'Android still has an active default network')
+        return {'airplane_mode_on': airplane, 'wifi_on': wifi, 'mobile_data': data}
+
+    def prepare(self):
+        api = int(self.d.sh('getprop', 'ro.build.version.sdk').strip())
+        require(api in (35, 36), 'Expected hosted API 35/36')
+        self.report['api'] = api
+        self.report['build_fingerprint'] = self.d.sh('getprop', 'ro.build.fingerprint').strip()
+        receipt = json.loads(Path('.ci/out/build-receipt.json').read_text())
+        require(receipt['source_commit'] == self.report['source_commit'], 'Build receipt source differs')
+        self.report['source_export'] = receipt['source_export']
+        self.report['installed_sha256'] = {}
+        for filename, package in [('app-x86_64-debug.apk', PACKAGE),
+                                  ('app-debug-androidTest.apk', PACKAGE + '.test')]:
+            expected = digest((Path('.ci/out/apks') / filename).read_bytes())
+            require(expected == receipt['apk_sha256'][filename], 'Build APK receipt differs')
+            remote = self.d.sh('pm', 'path', package).strip().removeprefix('package:')
+            actual = self.d.sh('sha256sum', remote).split()[0]
+            require(actual == expected, 'Installed APK differs from exact candidate')
+            self.report['installed_sha256'][package] = actual
+        probe = self.d.sh('pm', 'path', 'qa.quranly.probe').strip().removeprefix('package:')
+        require(probe.startswith('/'), 'Clipboard probe is not installed')
+        self.report['probe_installed_sha256'] = self.d.sh('sha256sum', probe).split()[0]
+        require(self.report['probe_installed_sha256'] == digest(Path('.ci/out/probe/probe.apk').read_bytes()),
+                'Installed clipboard probe differs from the controller-built probe')
+        canonical = Path('.local/handoff/app/quran.json').read_bytes()
+        self.canonical = {f"{r['surah']}:{r['ayah']}": r['unicode'] for r in json.loads(canonical)['ayahs']}
+        require(len(self.canonical) == 6236, 'Missing canonical Quran identities')
+        self.report['canonical_sha256'] = digest(canonical)
+        for namespace, key in SETTINGS:
+            self.initial[namespace + '/' + key] = self.d.sh('settings', 'get', namespace, key).strip()
+        self.report['settings_before'] = dict(self.initial)
+        self.save()  # Persist before the first mutation.
+        require(self.d.sh('settings', 'get', 'secure', 'accessibility_enabled').strip() == '0',
+                'Reader touch checks must run before TalkBack')
+        self.set_settings(1.0, 0)
+        self.report['offline'] = self.verify_offline()
+        self.d.start()
+        self.reader('1:1')
+        self.capture('startup')
+        for name, command in [('display-size', ('wm', 'size')), ('display-density', ('wm', 'density')),
+                              ('window', ('dumpsys', 'window')), ('activity', ('dumpsys', 'activity', 'top'))]:
+            (OUT / (name + '.txt')).write_text(self.d.sh(*command))
+        self.passed('offline-startup', key='1:1')
+
+    def authors(self):
+        self.jump(27, 59)
+        self.capture('reader-27-59')
+        self.click('فتح التفسير')
+        results = []
+        for book, author in AUTHORS:
+            self.click('اختيار تفسير ' + author, up=False)
+            self.selected(author)
+            self.seek('تفسير الآية 27:59', up=False, exact=True)
+            self.seek('THE ANT 59/93', up=False, exact=True)
+            excerpt = self.ready_tafsir(book)
+            self.capture('tafsir-27-59-' + book)
+            self.click('المصدر والترخيص', up=False)
+            self.seek('مركز تفسير')
+            self.capture('source-' + book, png=False)
+            self.click('العودة إلى التفسير', up=False)
+            self.selected(author)
+            self.seek('تفسير الآية 27:59', up=False, exact=True)
+            results.append({'book': book, 'key': '27:59', 'visible_prose_sha256': excerpt, 'selected_after_source_return': True})
+        self.back()
+        self.reader('27:59')
+        self.click('فتح التفسير')
+        self.selected('السعدي')
+        self.back()
+        self.reader('27:59')
+        self.passed('three-author-27:59-source-return', authors=results, remembered_on_reopen='al_saadi')
+
+    def contexts(self):
+        contract = json.loads(Path('docs/phase-4/content-contract.json').read_text())
+        require(len(contract['contexts']) == 7, 'Expected exactly seven registered contexts')
+        results = []
+        for row in contract['contexts']:
+            s, a, first, last = (row[k] for k in ('surah', 'selected', 'from', 'to'))
+            key, span = f'{s}:{a}', f'{s}:{first}–{last}'
+            self.jump(s, a)
+            self.click('فتح التفسير')
+            self.click('اختيار تفسير الطبري', up=False)
+            self.selected('الطبري')
+            self.seek('تفسير الآية ' + key, up=False, exact=True)
+            self.seek('لا يوجد نص تفسير مستقل لهذه الآية في سجل المصدر المحدد.', exact=True)
+            self.click('فتح السياق المحيط ' + span)
+            self.seek('السياق المحيط ' + span, exact=True)
+            self.seek('الآية المختارة ' + key + ' — الطبري', exact=True)
+            self.seek(f'عنوان المقطع في سجل المصدر {s}:{row["heading"]}', exact=True)
+            self.seek('سجلات المصدر بالترتيب؛ هذا سياق محيط وليس تفسيراً مستقلاً بديلاً للآية المختارة.', exact=True)
+            for source in row['source_rows']:
+                self.seek(f'سجل المصدر {s}:{source["ayah"]} — الطبري', exact=True)
+            self.seek('نهاية السياق ' + span, exact=True)
+            self.capture('context-' + key.replace(':', '-'), png=False)
+            self.seek('نهاية تفسير الآية ' + key, exact=True)
+            self.back()
+            self.reader(key)
+            results.append({'selected': key, 'range': span, 'source_rows': [r['ayah'] for r in row['source_rows']]})
+        self.passed('seven-tabari-contexts', contexts=results, full_source_bytes='native instrumentation contract')
+
+    def boundaries_and_clipboard(self):
+        self.jump(1, 1)
+        require(self.seek('الآية السابقة', exact=True).get('enabled') == 'false', 'First previous must be disabled')
+        self.jump(1, 7)
+        self.click('الآية التالية')
+        self.reader('2:1')
+        self.click('الآية السابقة')
+        self.reader('1:7')
+        self.jump(114, 6)
+        require(self.seek('الآية التالية', exact=True).get('enabled') == 'false', 'Final next must be disabled')
+        self.passed('boundaries', keys=['1:1', '1:7', '2:1', '114:6'])
+        for ayah in (281, 282):
+            key = f'2:{ayah}'
+            self.d.tap(self.jump(2, ayah))
+            self.click('نسخ الآية مع المرجع')
+            launched = self.d.sh('am', 'start', '-W', '-n', 'qa.quranly.probe/qa.PasteActivity')
+            require('Error' not in launched and 'Exception' not in launched, 'Clipboard probe did not launch')
+            root = self.dump()
+            buttons = [n for n in root.iter('node') if self.d.label(n).casefold() == 'read android clipboard']
+            require(len(buttons) == 1, 'Actual Android clipboard button missing or ambiguous')
+            self.d.tap(buttons[0])
+            root = self.capture('clipboard-' + str(ayah), png=False)
+            details = verify_clipboard(clipboard_value(root), self.canonical[key], key)
+            self.back()
+            self.reader(key)
+            self.passed('clipboard-' + key, **details)
+
+    def exports(self):
+        # The directory need not exist before the first actual UI export.
+        if 'cache' not in self.d.sh('run-as', PACKAGE, 'ls', '-1').splitlines():
+            return set()
+        directories = self.d.sh('run-as', PACKAGE, 'ls', '-1', 'cache').splitlines()
+        if 'reader-share' not in directories:
+            return set()
+        names = self.d.sh('run-as', PACKAGE, 'ls', '-1', 'cache/reader-share').splitlines()
+        require(all(re.fullmatch(r'verse-\d+-\d+-[A-Za-z0-9-]+\.png', n) for n in names), 'Unexpected share cache member')
+        return set(names)
+
+    def share(self, s, a, repeat=False):
+        key = f'{s}:{a}'
+        self.jump(s, a)
+        before = self.exports()
+        share_control = self.seek('مشاركة الآية كصورة', exact=True)
+        return_bounds = self.d.bounds(self.reader(key))
+        require(share_control.get('enabled') == 'true' and share_control.get('clickable') == 'true',
+                'Share control lacks enabled CLICK')
+        self.d.tap(share_control)
+        deadline = time.monotonic() + 25
+        while time.monotonic() < deadline:
+            activity = self.d.sh('dumpsys', 'activity', 'top')
+            if 'ChooserActivity' in activity:
+                break
+            time.sleep(.25)
+        else:
+            raise AssertionError('Native image chooser did not open')
+        name = 'share-' + key.replace(':', '-') + ('-repeat' if repeat else '')
+        (OUT / (name + '-activity.txt')).write_text(activity)
+        root = self.capture(name + '-chooser', png=not repeat)
+        caption = f'Verse {a}, Surah {s} shared via https://quranly.app !'
+        require(any(caption in self.d.label(n) for n in root.iter('node')), 'Chooser caption/key missing')
+        after = self.exports()
+        added = after - before
+        require(len(added) == 1 and before <= after, 'Expected exactly one new cache export')
+        filename = added.pop()
+        require(filename.startswith(f'verse-{s}-{a}-'), 'Export cache key mismatch')
+        png = subprocess.check_output(self.adb + ['exec-out', 'run-as', PACKAGE, 'cat',
+                                                  'cache/reader-share/' + filename], timeout=35)
+        if not repeat:
+            (OUT / (name + '-export.png')).write_bytes(png)
+        width, height, _, _ = read_png(png)
+        permissions = self.d.sh('dumpsys', 'activity', 'permissions')
+        (OUT / (name + '-uri-grants.txt')).write_text(permissions)
+        uri = f'content://{PACKAGE}.reader.share_provider/reader-images/{filename}'
+        require(uri in permissions, 'Chooser has no URI grant for the selected cache PNG')
+        require(8 <= len(png) <= 16 * 1024 * 1024, 'PNG byte size violates native contract')
+        self.back()
+        require(self.d.bounds(self.reader(key)) == return_bounds, 'Chooser cancellation changed reader scroll location')
+        self.capture(name + '-returned', png=False)
+        self.passed('share-' + key + ('-repeat' if repeat else ''), key=key, cache_name=filename,
+                    bytes=len(png), png_sha256=digest(png), dimensions=[width, height],
+                    uri=uri, returned_bounds=return_bounds, cancelled=True, delivered=False)
+        return png
+
+    def long_export(self, data):
+        png = read_png(data)
+        w, h = png[:2]
+        # Current source card: 2x raster, Quran horizontal pad 64/3dp,
+        # header top 64/3dp +48dp, prose top18dp; footer48dp+43/3dp,
+        # prose bottom14dp. These describe the provisional candidate only.
+        exported = ink_lines(png, (128 / 3, (64 / 3 + 48 + 18) * 2,
+                                   w - 128 / 3, h - (48 + 43 / 3 + 14) * 2), gap=8)
+        require(len(exported) >= 20, 'Long export is missing expected Quran lines')
+        self.seek('العودة إلى اختيار القراءة', up=False, exact=True)
+        matches, seen = [], set()
+        for frame in range(45):
+            root = self.dump(f'long-raster-{frame:02d}')
+            node = self.d.find('الآية 2:282 ', root)
+            require(node is not None and self.d.label(node) == 'الآية 2:282 ' + self.canonical['2:282'],
+                    'Long raster lost canonical ayah identity')
+            screen = subprocess.check_output(self.adb + ['exec-out', 'screencap', '-p'], timeout=35)
+            decoded = read_png(screen)
+            box = self.d.bounds(node)
+            scrolls = [n for n in root.iter('node') if n.get('scrollable') == 'true']
+            require(scrolls, 'Long reader has no scroll owner')
+            l, t, r, b = self.d.bounds(max(scrolls, key=lambda n: self.d.bounds(n)[3] - self.d.bounds(n)[1]))
+            visible = ink_lines(decoded, box, gap=round(8 * (box[2] - box[0]) / (w - 256 / 3)),
+                                clipped=(box[1] <= t + 1, box[3] >= b - 1))
+            if visible:
+                matched = match_lines(visible, exported)
+                seen.update(row['line'] for row in matched)
+                matches.append({'frame': frame, 'screen_sha256': digest(screen), 'matches': matched})
+                # Selective PNG evidence: first, final; raw XML and metrics for
+                # every intermediate state. Avoid dozens of repeated huge PNGs.
+                if len(matches) == 1 or box[3] < b - 1:
+                    (OUT / f'long-raster-{frame:02d}.png').write_bytes(screen)
+            (OUT / 'long-raster-progress.json').write_text(json.dumps({'frames': matches, 'matched_lines': sorted(seen)}))
+            # Continue to the actual on-screen ayah end even after every export
+            # line matched: a PNG cropped before the final line must fail too.
+            if box[3] < b - 1:
+                break
+            self.d.sh('input', 'swipe', (l + r) // 2, int(t + (b - t) * .7),
+                      (l + r) // 2, int(t + (b - t) * .35), 500)
+            time.sleep(.2)
+        details = {'export_line_count': len(exported), 'matched_lines': sorted(seen), 'frames': matches,
+                   'method': 'complete visible Quran line ink vs full PNG, cosine >=0.94; no OCR/original-template claim'}
+        (OUT / 'long-raster-metrics.json').write_text(json.dumps(details, indent=2))
+        require(seen == set(range(len(exported))), 'Full long-export raster coverage incomplete')
+        self.reader('2:282')
+        self.passed('long-export-raster-complete', **details)
+
+    def lifecycle(self):
+        self.jump(27, 59)
+        node = self.reader('27:59')
+        bounds_before = self.d.bounds(node)
+        self.d.sh('input', 'keyevent', 'KEYCODE_HOME')
+        self.d.start()
+        require(self.d.bounds(self.reader('27:59')) == bounds_before, 'Background changed reader scroll location')
+        self.report['offline_after_background'] = self.verify_offline()
+        self.capture('background-return', png=False)
+        self.passed('background-location', key='27:59', bounds=bounds_before)
+        self.click('فتح التفسير')
+        self.click('اختيار تفسير السعدي', up=False)
+        self.selected('السعدي')
+        # A visible source route and return allow the serialized preference write
+        # to complete through the real native owner before process termination.
+        self.click('المصدر والترخيص', up=False)
+        self.seek('مركز تفسير')
+        self.click('العودة إلى التفسير', up=False)
+        self.selected('السعدي')
+        self.back()
+        self.d.sh('am', 'force-stop', PACKAGE)
+        processes = self.d.sh('ps', '-A')
+        require(not any(line.split()[-1] == PACKAGE for line in processes.splitlines() if line.split()),
+                'Force-stop left candidate process running')
+        self.d.start()
+        self.reader('1:1')
+        self.capture('cold-relaunch', png=False)
+        self.click('فتح التفسير')
+        self.selected('السعدي')
+        self.back()
+        self.reader('1:1')
+        self.report['offline_after_force_stop'] = self.verify_offline()
+        self.passed('force-stop-relaunch-location', before='27:59', actual_after='1:1',
+                    contract='in-memory reader; durable resume remains issue #8', persisted_author='al_saadi')
+
+    def access(self, rotation, name):
+        self.set_settings(2.0, rotation)
+        self.reader('2:282')
+        # Assert reachability AND enabled CLICK at actual bounds, then use the
+        # critical controls. Later inactive personal/audio/settings producers
+        # are not claimed functional by this reader check.
+        self.seek('العودة إلى اختيار القراءة', up=False, exact=True)
+        self.click('العودة إلى اختيار القراءة', up=False)
+        self.click('Start Reading Quran')
+        self.reader('2:282')
+        root = self.capture(name + '-head')
+        width, height, _, _ = read_png((OUT / (name + '-head.png')).read_bytes())
+        require(root.get('rotation') == str(rotation), 'Actual Android window rotation differs from requested setting')
+        require((width > height) if rotation == 1 else (height > width),
+                'Actual captured viewport did not change orientation')
+        for label in ('الآية السابقة', 'الآية التالية', 'مشاركة الآية كصورة', 'فتح التفسير'):
+            node = self.seek(label, exact=True)
+            require(node.get('clickable') == 'true' and node.get('enabled') == 'true', 'Critical control unavailable: ' + label)
+        self.click('الآية التالية')
+        self.reader('2:283')
+        self.click('الآية السابقة')
+        self.reader('2:282')
+        self.click('فتح التفسير')
+        for _, author in AUTHORS:
+            self.click('اختيار تفسير ' + author, up=False)
+            self.selected(author)
+        self.seek('نهاية تفسير الآية 2:282')  # Saadi, bounded complete long entry.
+        self.capture(name + '-tafsir-end')
+        self.click('المصدر والترخيص')
+        self.seek('مركز تفسير')
+        self.click('العودة إلى التفسير', up=False)
+        self.click('العودة إلى القراءة')
+        self.reader('2:282')
+        self.capture(name + '-reader-end')
+        self.passed(name + '-controls', key='2:282', font_scale=2.0, rotation=rotation,
+                    actual_window_rotation=root.get('rotation'), captured_dimensions=[width, height],
+                    used=['entry-return', 'previous-next', 'bookstand', 'three-authors', 'source-return', 'tafsir-end-return'],
+                    share='enabled CLICK reachable; actual chooser tested at normal scale')
+
+    def run(self):
+        try:
+            self.prepare()
+            self.authors()
+            self.contexts()
+            self.boundaries_and_clipboard()
+            self.share(27, 59)
+            self.share(27, 59, repeat=True)
+            long_png = self.share(2, 282)
+            self.long_export(long_png)
+            self.lifecycle()
+            self.jump(2, 282)
+            self.access(0, 'portrait-2x')
+            self.access(1, 'landscape-2x')
+        except BaseException:
+            self.report['errors'].append({'stage': 'reader', 'traceback': traceback.format_exc()})
+            try:
+                self.deadline = time.monotonic() + 70
+                self.capture('failure')
+                (OUT / 'failure-activity.txt').write_text(self.d.sh('dumpsys', 'activity', 'top'))
+            except Exception:
+                self.report['errors'].append({'stage': 'failure-capture', 'traceback': traceback.format_exc()})
+        finally:
+            # Every attempted restoration has an independent readback. Continue
+            # other keys after one failure; cleanup failures still fail the run.
+            restored = {}
+            for setting, value in self.initial.items():
+                namespace, key = setting.split('/')
+                try:
+                    if value == 'null':
+                        self.d.sh('settings', 'delete', namespace, key, timeout=15)
+                    else:
+                        self.d.sh('settings', 'put', namespace, key, value, timeout=15)
+                    actual = self.d.sh('settings', 'get', namespace, key, timeout=15).strip()
+                    restored[setting] = actual
+                    require(actual == value, 'Settings restoration readback differs: ' + setting)
+                except Exception:
+                    self.report['errors'].append({'stage': 'restore-' + setting, 'traceback': traceback.format_exc()})
+            self.report['settings_after'] = restored
+            if len(restored) == len(SETTINGS) and restored == self.initial:
+                self.passed('settings-restored', actual_readback=restored)
+            self.trace.close()
+            covered = {c['name'] for c in self.report['checks']}
+            self.report['missing_checks'] = sorted(set(REQUIRED) - covered)
+            self.report['status'] = 'passed' if not self.report['errors'] and not self.report['missing_checks'] else 'failed'
+            self.save()
+        return self.report['status'] == 'passed'
+
+
+def main():
+    OUT.mkdir(parents=True, exist_ok=True)
+    require(not (OUT / 'reader-result.json').exists(), 'Reader output already exists; refuse stale evidence reuse')
+    try:
+        return 0 if ReaderChecks().run() else 1
+    except BaseException:
+        # Even missing serial/helper/probe/setup is a failed required run.
+        (OUT / 'reader-result.json').write_text(json.dumps({'schema': 1, 'status': 'failed',
+            'scope': 'construction', 'finalParityAccepted': False, 'required_checks': list(REQUIRED),
+            'missing_checks': list(REQUIRED), 'error': traceback.format_exc()}, indent=2) + '\n')
+        return 1
+
+
+if __name__ == '__main__':
+    sys.exit(main())
