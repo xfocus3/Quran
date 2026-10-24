@@ -164,7 +164,7 @@ class _ReaderViewState extends State<ReaderView> {
     style: OutlinedButton.styleFrom(
       padding: const EdgeInsets.symmetric(vertical: 10),
       minimumSize: const Size(48, 52),
-      foregroundColor: Colors.white,
+      foregroundColor: readerLightArrow,
       disabledForegroundColor: Colors.white54,
       side: const BorderSide(color: Colors.white, width: 1),
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
@@ -178,7 +178,7 @@ class _ReaderViewState extends State<ReaderView> {
         label: 'الآية السابقة',
         child: _arrow(
           _backArrow,
-          color: _reader.previous == null ? Colors.white54 : Colors.white,
+          color: _reader.previous == null ? Colors.white54 : readerLightArrow,
         ),
       ),
     ),
@@ -369,7 +369,7 @@ class _ReaderViewState extends State<ReaderView> {
                                   fontSize: 31.5,
                                   height: 1.75,
                                   letterSpacing: 0,
-                                  color: readerInk,
+                                  color: readerPlainQuranInk,
                                 ),
                               ),
                           ],
@@ -711,7 +711,7 @@ class _ReaderViewState extends State<ReaderView> {
         child: TextButton(
           style: TextButton.styleFrom(
             padding: EdgeInsets.zero,
-            foregroundColor: Colors.white,
+            foregroundColor: readerLightArrow,
           ),
           onPressed: () => setState(() => _entry = true),
           // Original pill extends20px beyond the card's left edge. Keep a
@@ -731,7 +731,7 @@ class _ReaderViewState extends State<ReaderView> {
                     borderRadius: BorderRadius.circular(30),
                   ),
                   child: Center(
-                    child: _arrow(_backArrow, color: Colors.white),
+                    child: _arrow(_backArrow, color: readerLightArrow),
                   ),
                 ),
               ),

@@ -17,7 +17,10 @@ void main() => runApp(const MainApp());
 // Sampled retained light reader; background itself is the original APK asset.
 const readerPurple = Color(0xFF50308C);
 const readerCard = Color(0xFFFAF7FF);
+// UI ink is distinct from the observed plain Madina Quran foreground.
 const readerInk = Color(0xFF0D0D0D);
+const readerPlainQuranInk = Color(0xFF181818);
+const readerLightArrow = readerCard;
 
 class MainApp extends StatefulWidget {
   const MainApp({super.key, this.bundle, this.metadata});
