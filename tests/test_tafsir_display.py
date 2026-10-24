@@ -1,6 +1,7 @@
 """Real production formatter on JVM, independent exact source oracle; no Android proof."""
 import collections
 import hashlib
+import importlib.util
 import json
 from pathlib import Path
 import re
@@ -11,9 +12,49 @@ import tempfile
 import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
+# The same committed test runs in the private controller and selected-source CI.
+HARNESS = ROOT / '.sandcastle/hosted/reader.py'
+if not HARNESS.is_file():
+    HARNESS = ROOT / '.ci/reader.py'
+SPEC = importlib.util.spec_from_file_location('tafsir_expectations', HARNESS)
+expectations = importlib.util.module_from_spec(SPEC)
+SPEC.loader.exec_module(expectations)
 
 
 class TafsirDisplayContract(unittest.TestCase):
+    def test_authenticated_hosted_expectations_reject_other_book_or_key(self):
+        owner = expectations.TafsirExpectations(ROOT, ROOT / '.local/handoff')
+        self.assertEqual(len(owner.notices), 4)
+        notices = [text for notice in owner.notices for text in (notice['title'], notice['text'])]
+        traversal = expectations.TextTraversal(notices)
+        self.assertTrue(traversal.observe(notices))
+        traversal.finish()
+        for (book, key), sample in owner.SAMPLES.items():
+            with self.subTest(book=book, key=key):
+                entry = owner.entry(book, key)
+                lines = entry['display'].split('\n')
+                expected = ([line for line in lines if line] + ['نهاية تفسير الآية ' + key]
+                            if key == '27:59' else [lines[i] for i in sample])
+                traversal = expectations.TextTraversal(expected)
+                self.assertTrue(traversal.observe(expected))
+                traversal.finish()
+                stale_key = '27:58' if key == '27:59' else '2:281'
+                for other_book, wrong_key in [(book, stale_key)] + [
+                    (other, key) for other in expectations.BOOK_TITLES if other != book
+                ]:
+                    wrong = owner.entry(other_book, wrong_key)['display'].split('\n')
+                    # Correct title and key, actual authenticated but wrong body.
+                    with self.assertRaises(AssertionError):
+                        traversal = expectations.TextTraversal(expected)
+                        traversal.observe([expectations.BOOK_TITLES[book], 'تفسير الآية ' + key]
+                                          + wrong + ['نهاية تفسير الآية ' + key])
+                        traversal.finish()
+                # Only the source's quote/heading cannot pass as loaded prose.
+                with self.assertRaises(AssertionError):
+                    traversal = expectations.TextTraversal([lines[i] for i in sample])
+                    traversal.observe(lines[:sample[-1]])
+                    traversal.finish()
+
     def test_all_source_characters_breaks_and_context_rows(self):
         with tempfile.TemporaryDirectory() as output:
             subprocess.run(['javac', '-encoding', 'UTF-8', '-d', output,
@@ -44,13 +85,9 @@ class TafsirDisplayContract(unittest.TestCase):
                 bom_count = 0
                 with sqlite3.connect(f'file:{pack}?mode=ro&immutable=1', uri=True) as db:
                     def check_row(book, s, a, raw):
-                        # Independent oracle: fixed literal replacements, unlike
-                        # production's forward scanner. Compare exact Unicode,
-                        # including whitespace and all source irregularities.
-                        expected = raw.replace('\r\n', '\n').replace('\r', '\n')
-                        for token in ('<br>', '<p>', '</p>', '</div>'):
-                            expected = expected.replace(token, '\n')
-                        expected = expected.replace('&nbsp;', '\u00a0')
+                        # Same independent literal oracle now owns hosted UI
+                        # expectations too; still independent of the Java scanner.
+                        expected = expectations.expected_tafsir_display(raw)
                         self.assertEqual(render(raw), expected, f'{book} {s}:{a}')
                     for book, pinned in contract['books'].items():
                         digest = hashlib.sha256()

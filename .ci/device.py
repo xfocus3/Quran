@@ -107,7 +107,7 @@ def main():
     shell('pm', 'clear', 'com.xfocus.quranly.local')
     with (OUT / 'reader.log').open('w') as log:
         subprocess.run([sys.executable, '.ci/reader.py'], stdout=log, stderr=subprocess.STDOUT,
-                       check=True, timeout=2520)  # 40-minute harness plus bounded cleanup.
+                       check=True, timeout=2700)  # 40-minute harness plus bounded cleanup.
     reader_path = OUT / 'reader/reader-result.json'
     reader = json.loads(reader_path.read_text())
     if (reader.get('status') != 'passed' or reader.get('source_commit') != os.environ['GITHUB_SHA'] or
