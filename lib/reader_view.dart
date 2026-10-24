@@ -164,9 +164,12 @@ class _ReaderViewState extends State<ReaderView> {
     style: OutlinedButton.styleFrom(
       padding: const EdgeInsets.symmetric(vertical: 10),
       minimumSize: const Size(48, 52),
-      foregroundColor: readerLightArrow,
+      foregroundColor: readerLightControl,
       disabledForegroundColor: Colors.white54,
-      side: const BorderSide(color: Colors.white, width: 1),
+      side: BorderSide(
+        color: _reader.previous == null ? Colors.white : readerLightControl,
+        width: 1,
+      ),
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
     ),
     onPressed: _reader.previous == null ? null : () => _open(_reader.previous!),
@@ -178,7 +181,7 @@ class _ReaderViewState extends State<ReaderView> {
         label: 'الآية السابقة',
         child: _arrow(
           _backArrow,
-          color: _reader.previous == null ? Colors.white54 : readerLightArrow,
+          color: _reader.previous == null ? Colors.white54 : readerLightControl,
         ),
       ),
     ),
@@ -711,7 +714,7 @@ class _ReaderViewState extends State<ReaderView> {
         child: TextButton(
           style: TextButton.styleFrom(
             padding: EdgeInsets.zero,
-            foregroundColor: readerLightArrow,
+            foregroundColor: readerLightControl,
           ),
           onPressed: () => setState(() => _entry = true),
           // Original pill extends20px beyond the card's left edge. Keep a
@@ -727,11 +730,11 @@ class _ReaderViewState extends State<ReaderView> {
                 maxHeight: 30,
                 child: Container(
                   decoration: BoxDecoration(
-                    border: Border.all(color: readerCard),
+                    border: Border.all(color: readerLightControl),
                     borderRadius: BorderRadius.circular(30),
                   ),
                   child: Center(
-                    child: _arrow(_backArrow, color: readerLightArrow),
+                    child: _arrow(_backArrow, color: readerLightControl),
                   ),
                 ),
               ),
