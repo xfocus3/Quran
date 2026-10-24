@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "candidate_commit": "352283529efd8351a675cf1659ed6fb88b642da4",
+  "candidate_commit": "6fa30eafd0182a8ba10ebdc5685d88b597b125ba",
   "candidate_accepted": false,
   "files": {
     ".nvmrc": "4c42fb8d6334c5cdcac68b93f96c581fb83b1f58cda898cff115e5e941ef717d",
@@ -58,7 +58,7 @@
     "tests/java/TafsirDisplayProbe.java": "f63c8f5d8697cb645e7d577c1c7c367b34261803b420975066259618b985d391",
     "tests/test_artifacts.py": "12a04a903a4a3e4cfb48a0e208ac9e3bc5949033d60ac635505656dc904ae9e3",
     "tests/test_phase4.py": "ef99998025346b46a028031a75064a5af1d377cd597704056278f76577bb5ee3",
-    "tests/test_tafsir_display.py": "1f404201d26eb53867933cf6196cdb2770d87c6b88ca8cd85f41fe240f1d79e3",
+    "tests/test_tafsir_display.py": "d01564aa117c54f7a58bcc9fff658d5aefbf205945000da091a62c26b170e6cb",
     "tools/prepare_artifacts.py": "d249fb1f2569d50e411cfbe266d949a25bc2f18483e67a3fe4c8d7e8a0aeab0f",
     "tools/prepare_reader_artifacts.py": "ba4a704dd95afd44deeb68bf0e4d632605d4bd3dffdc6b5b20853488a9df7f1f"
   }

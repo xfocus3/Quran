@@ -22,6 +22,40 @@ SPEC.loader.exec_module(expectations)
 
 
 class TafsirDisplayContract(unittest.TestCase):
+    def test_authenticated_merged_transport_keeps_whole_bodies_and_all_samples(self):
+        # Real retained content in synthetic Android transport. No claim that
+        # the source route or these composite frames ran on a device.
+        owner = expectations.TafsirExpectations(ROOT, ROOT / '.local/handoff')
+        notices = [text for notice in owner.notices for text in (notice['title'], notice['text'])]
+        label = owner.source_summary + '\n' + '\n'.join(
+            title + '\n\u202a' + body + '\u202c' for title, body in zip(notices[::2], notices[1::2]))
+        traversal = expectations.TextTraversal(notices, allowed=[owner.source_summary] + notices, ltr=True)
+        self.assertTrue(traversal.observe([label], [21], state=5))
+        result = traversal.finish()
+        self.assertEqual(result['exact_labels'], 8)
+        for text, match in zip(notices, result['matches']):
+            self.assertEqual(label[match['start']:match['end']], text)
+            self.assertEqual(match['value_sha256'], expectations.digest(text.encode()))
+        for book, key in owner.SAMPLES:
+            for full in ((False, True) if key == '27:59' else (False,)):
+                content = owner.content(book, key, full)
+                lines = [line for line in owner.entry(book, key)['display'].split('\n') if line]
+                allowed = lines + ['نهاية تفسير الآية ' + key]
+                merged = '\n'.join(allowed)
+                traversal = expectations.TextTraversal(content['expected'], allowed=allowed)
+                self.assertTrue(traversal.observe([merged]), (book, key, full))
+                result = traversal.finish()
+                for match in result['matches']:
+                    expected = content['expected'][match['identity']]
+                    self.assertEqual(merged[match['start']:match['end']], expected)
+                # Changed prose cannot be accepted because another exact sample
+                # shares this node. Whole-label grammar must fail closed.
+                wrong = merged.replace(content['expected'][-1], content['expected'][-1] + ' altered', 1)
+                traversal = expectations.TextTraversal(content['expected'], allowed=allowed)
+                self.assertFalse(traversal.observe([wrong]))
+                with self.assertRaisesRegex(AssertionError, 'incomplete'):
+                    traversal.finish()
+
     def test_authenticated_hosted_expectations_reject_other_book_or_key(self):
         owner = expectations.TafsirExpectations(ROOT, ROOT / '.local/handoff')
         self.assertEqual(len(owner.notices), 4)

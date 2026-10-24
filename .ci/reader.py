@@ -4,6 +4,7 @@ Only the controller runs this against an installed candidate and installed QA
 probe. Sibling device_ui/device_navigation are the public CI helpers. No Android
 SDK, Pillow, host paths or original captures are needed. Outputs are private.
 """
+import ast
 import gzip
 import hashlib
 import importlib
@@ -42,6 +43,111 @@ def require(condition, message):
 
 def digest(data):
     return hashlib.sha256(data).hexdigest()
+
+
+def metadata_value(raw):
+    """Interpret one balanced Android directional envelope, only for metadata.
+
+    No stripping, case folding, substring or general Unicode normalization.
+    In particular embedded controls and malformed/nested envelopes stay unequal.
+    """
+    pairs = {'\u202a': '\u202c', '\u202b': '\u202c', '\u2066': '\u2069',
+             '\u2067': '\u2069', '\u2068': '\u2069'}
+    if len(raw) >= 2 and pairs.get(raw[0]) == raw[-1]:
+        return raw[1:-1]
+    return raw
+
+
+def provenance(index, label, start, end):
+    return {'node_index': index, 'node_label_sha256': digest(label.encode()),
+            'start': start, 'end': end, 'offset_unit': 'unicode-code-points',
+            'raw_value': label[start:end]}
+
+
+def tafsir_header(rows, book, key, reference, suffix=()):
+    """Exact ordered book/reference/key in standalone or composite header nodes.
+
+    Accept only nodes wholly composed of contiguous expected metadata lines.
+    A matching fragment in prose, another book, a stale key or extra suffix
+    cannot authenticate a header. Caller separately verifies actual author CLICK.
+    """
+    expected = [BOOK_TITLES[book], reference, 'تفسير الآية ' + key]
+    found = []
+    for index, raw in rows:
+        lines = raw.split('\n')  # Metadata only; never split notice bodies here.
+        # The empty-source live-region is an explicitly owned UI state, not
+        # source prose. It may join the header only on the seven context routes.
+        if suffix and lines[-len(suffix):] == list(suffix):
+            lines = lines[:-len(suffix)]
+        values = [metadata_value(line) for line in lines]
+        starts = [i for i in range(3) if values == expected[i:i + len(values)]]
+        if len(starts) != 1:
+            continue
+        offset = 0
+        for i, line in enumerate(lines):
+            found.append((starts[0] + i, provenance(index, raw, offset, offset + len(line))))
+            offset += len(line) + 1
+    if [i for i, _ in found] != [0, 1, 2]:
+        return None
+    return [match for _, match in found]
+
+
+class ScrollProgress:
+    """Stop after two unchanged transitions; a bound is failure, never success.
+
+    Merged scroll labels can retain bounds while their pixels move. On repeated
+    semantics, lazily establish and compare an actual raster fingerprint before
+    declaring a bound. No screenshots are needed for changing semantic frames.
+    """
+    def __init__(self):
+        self.previous = None
+        self.unchanged = 0
+        self.raster = None
+
+    def observe(self, state, raster=None):
+        if state == self.previous:
+            if raster is None:
+                self.unchanged += 1
+            else:
+                current = raster()
+                self.unchanged = self.unchanged + 1 if current == self.raster else 0
+                self.raster = current
+        else:
+            self.unchanged = 0
+            self.raster = None
+        self.previous = state
+        require(self.unchanged < 2, 'Required UI target unreachable: unchanged scroll state/bounds')
+
+
+def raw_atoms(raw, allowed, ltr=False):
+    """Parse a whole semantic label using exact producer-owned text atoms.
+
+    LF is a *between-widget* separator, not a source splitter. A whole notice
+    (including its internal CR/LF, BOM and marks) is one indivisible atom. For
+    TextDirection.ltr notices the literal Android LRE/PDF envelope is an alternate
+    transport encoding; the source range/hash excludes that external framing.
+    Never strip or normalize any character inside a source value. Unknown
+    prefixes/suffixes invalidate the whole node, including prefix-only bodies.
+    """
+    variants = [(text, text, 0) for text in allowed]
+    if ltr:
+        variants += [('\u202a' + text + '\u202c', text, 1) for text in allowed]
+    variants.sort(key=lambda row: len(row[0]), reverse=True)
+    matches, offset = [], 0
+    while offset < len(raw):
+        match = next(((encoded, text, envelope) for encoded, text, envelope in variants
+                      if raw.startswith(encoded, offset) and
+                      (offset + len(encoded) == len(raw) or raw[offset + len(encoded)] == '\n')), None)
+        if match is None:
+            return []
+        encoded, text, envelope = match
+        matches.append((text, offset + envelope, offset + envelope + len(text)))
+        offset += len(encoded)
+        if offset < len(raw):
+            offset += 1
+            if offset == len(raw):  # Unowned trailing separator is not source.
+                return []
+    return matches
 
 
 def expected_tafsir_display(raw):
@@ -94,6 +200,18 @@ class TafsirExpectations:
             require(digest(data) == pinned, 'Unauthenticated source notice: ' + filename)
             self.notices.append({'file': filename, 'title': title, 'text': data.decode('utf-8'), 'sha256': pinned})
         self.notice_owner_sha256 = digest(owner)
+        # This exact static summary may precede the four notice pairs in one
+        # merged label. Derive it from the unchanged producing source, rather
+        # than allowing an arbitrary prefix or duplicating its prose here.
+        view = (root / 'lib/tafsir_view.dart').read_text()
+        self.notice_view_sha256 = digest((root / 'lib/tafsir_view.dart').read_bytes())
+        summary = view.split("const Text(\n              'مركز تفسير", 1)
+        require(len(summary) == 2, 'Source summary declaration changed')
+        literals = "'مركز تفسير" + summary[1].split('style: TextStyle', 1)[0]
+        tokens = re.findall(r"'(?:[^'\\]|\\.)*'", literals)
+        require(tokens and not re.sub(r"'(?:[^'\\]|\\.)*'", '', literals).replace(',', '').strip(),
+                'Source summary format changed')
+        self.source_summary = ''.join(ast.literal_eval(token) for token in tokens)
 
     def entry(self, book, key):
         s, a = map(int, key.split(':'))
@@ -134,20 +252,24 @@ class TafsirExpectations:
 
 
 class TextTraversal:
-    """Ordered exact semantic labels across bounded, overlapping XML frames.
+    """Ordered exact raw identities across bounded, overlapping XML frames.
 
     Blank source lines have no Android text label and are reported separately.
     No whitespace, bidi, mark or source Unicode normalization is permitted here.
     """
-    def __init__(self, expected, frame_limit=100):
+    def __init__(self, expected, frame_limit=100, allowed=None, ltr=False):
         require(expected and all(expected), 'Expected nonempty text identities')
         require(len(set(expected)) == len(expected), 'Repeated text needs an unambiguous line-identity contract')
         self.expected = expected
         self.position = self.frames = 0
         self.frame_limit = frame_limit
         self.loading = False
+        self.allowed = list(dict.fromkeys(expected if allowed is None else allowed))
+        require(all(text in self.allowed for text in expected), 'Expected identity outside source grammar')
+        self.ltr = ltr
+        self.matches = []
 
-    def observe(self, labels):
+    def observe(self, labels, node_indices=None, state=None):
         self.frames += 1
         require(self.frames <= self.frame_limit, 'Text traversal frame budget exhausted')
         require(not any('تعذّر' in text or 'لم يُعثر' in text or text == 'إعادة المحاولة' for text in labels),
@@ -156,12 +278,19 @@ class TextTraversal:
         if self.loading:
             return False
         identities = {text: i for i, text in enumerate(self.expected)}
-        visible = [identities[text] for text in labels if text in identities]
+        atoms = []
+        for index, raw in zip(range(len(labels)) if node_indices is None else node_indices, labels):
+            atoms.extend((text, provenance(index, raw, start, end))
+                         for text, start, end in raw_atoms(raw, self.allowed, self.ltr))
+        visible = [identities[text] for text, _ in atoms if text in identities]
         require(all(a <= b for a, b in zip(visible, visible[1:])), 'Source text order differs in displayed frame')
-        for text in labels:
+        for text, match in atoms:
             if text in identities and identities[text] >= self.position:
                 require(identities[text] == self.position, 'Displayed source text skipped an expected line')
             if self.position < len(self.expected) and text == self.expected[self.position]:
+                self.matches.append({'identity': self.position, 'frame': self.frames, 'state': state,
+                                     **{k: v for k, v in match.items() if k != 'raw_value'},
+                                     'value_sha256': digest(text.encode())})
                 self.position += 1
         return self.position == len(self.expected)
 
@@ -169,7 +298,8 @@ class TextTraversal:
         require(not self.loading and self.position == len(self.expected),
                 f'Exact source text traversal incomplete: {self.position}/{len(self.expected)} labels')
         return {'exact_labels': len(self.expected), 'frames': self.frames,
-                'label_sha256': [digest(text.encode()) for text in self.expected]}
+                'label_sha256': [digest(text.encode()) for text in self.expected],
+                'matches': self.matches}
 
 
 class RasterTraversal:
@@ -387,30 +517,49 @@ class ReaderChecks:
                 self.adb + ['exec-out', 'screencap', '-p'], timeout=35))
         return root
 
-    def seek(self, query, up=True, exact=False, limit=70, scroll_step=250):
-        gestures = []
-        for _ in range(limit + 1):
+    def visible_rows(self, root):
+        return [(i, n, self.d.label(n)) for i, n in enumerate(root.iter('node'))
+                if self.d.label(n) and self.d.bounds(n)[2] > self.d.bounds(n)[0]
+                and self.d.bounds(n)[3] > self.d.bounds(n)[1]]
+
+    def scroll_raster(self):
+        return digest(subprocess.check_output(self.adb + ['exec-out', 'screencap', '-p'], timeout=35))
+
+    def seek_frame(self, query, match, up=True, limit=70, scroll_step=250):
+        gestures, progress = [], ScrollProgress()
+        loading_deadline = None
+        reason = 'gesture budget exhausted'
+        for attempt in range(limit + 1):
             root = self.dump()
-            # Android adds bidi embedding wrappers to LTR metadata labels.
-            # Strip wrappers only for control lookup; canonical Quran and the
-            # Android clipboard are always compared byte-for-byte below.
-            candidates = [n for n in root.iter('node') if
-                         (self.d.label(n).strip('\u202a\u202b\u202c\u202d\u202e\u2066\u2067\u2068\u2069') == query
-                          if exact else query in self.d.label(n))]
-            node = next((n for n in candidates if self.d.bounds(n)[2] > self.d.bounds(n)[0]
-                         and self.d.bounds(n)[3] > self.d.bounds(n)[1]), None)
-            if node is not None:
-                l, t, r, b = self.d.bounds(node)
-                if r > l and b > t:
-                    return node
+            rows = self.visible_rows(root)
+            result = match(rows)
+            if result is not None:
+                return result
+            labels = [raw for _, _, raw in rows]
+            require(not any(text.startswith(('تعذّر', 'لم يُعثر')) or text == 'إعادة المحاولة'
+                            for text in labels), 'Content UI reported an error while seeking ' + query)
+            if any('جارٍ فتح' in text or 'جارٍ حفظ اختيار المفسر' in text for text in labels):
+                if loading_deadline is None:
+                    loading_deadline = time.monotonic() + 15
+                require(time.monotonic() < loading_deadline, 'Content UI remained loading while seeking ' + query)
+                time.sleep(.2)
+                continue
+            loading_deadline = None
+            state = tuple((self.d.label(n), n.get('bounds'), n.get('scrollable'), n.get('enabled'),
+                           n.get('selected'), n.get('clickable')) for n in root.iter('node'))
+            try:
+                progress.observe(state, self.scroll_raster)
+            except AssertionError as error:
+                reason = str(error)
+                break
+            if attempt == limit:
+                break
             scrolls = [n for n in root.iter('node') if n.get('scrollable') == 'true'
                        and self.d.bounds(n)[3] - self.d.bounds(n)[1] > 120]
             require(scrolls, 'No active scroll owner while seeking ' + query)
             owner = max(scrolls, key=lambda n: (self.d.bounds(n)[2] - self.d.bounds(n)[0]) *
                         (self.d.bounds(n)[3] - self.d.bounds(n)[1]))
             l, t, r, b = self.d.bounds(owner)
-            # Small bounded steps keep wrapped author controls reachable in a
-            # landscape sheet, without gestures crossing its dismissal handle.
             distance = min(scroll_step, (b - t) * .4)
             middle = (b + t) / 2
             low, high = int(middle + distance / 2), int(middle - distance / 2)
@@ -418,8 +567,38 @@ class ReaderChecks:
             self.d.sh('input', 'swipe', (l + r) // 2, low if up else high,
                       (l + r) // 2, high if up else low, 450)
             time.sleep(.15)
-        (OUT / 'unreachable.json').write_text(json.dumps({'query': query, 'gestures': gestures}))
-        raise AssertionError('Required UI target unreachable: ' + query)
+        (OUT / 'unreachable.json').write_text(json.dumps({'query': query, 'reason': reason, 'gestures': gestures}))
+        raise AssertionError('Required UI target unreachable: ' + query + ': ' + reason)
+
+    def seek(self, query, up=True, exact=False, limit=70, scroll_step=250):
+        # Exact controls retain whole-node authority. Never click a fragment
+        # extracted from a composite header or an authenticated prose value.
+        def match(rows):
+            nodes = [node for _, node, raw in rows if (raw == query if exact else query in raw)]
+            # Header/footer may expose the same real control twice. Each still
+            # owns its complete exact label and actual bounds/action.
+            return nodes[0] if nodes else None
+        return self.seek_frame(query, match, up, limit, scroll_step)
+
+    def seek_metadata(self, query, up=True):
+        # Read-only metadata lines (context references/endpoints), explicitly
+        # scoped by callers. Controls, canonical Quran and source bodies never
+        # use this interpretation.
+        def match(rows):
+            nodes = [node for _, node, raw in rows
+                     if query in [metadata_value(line) for line in raw.split('\n')]]
+            require(len(nodes) <= 1, 'Ambiguous metadata: ' + query)
+            return nodes[0] if nodes else None
+        return self.seek_frame(query, match, up=up)
+
+    def header(self, book, key, suffix=()):
+        def match(rows):
+            result = tafsir_header([(i, raw) for i, _, raw in rows], book, key, self.references[key], suffix)
+            if result is None:
+                return None
+            return [{'state': self.state_count, **{k: v for k, v in row.items() if k != 'raw_value'}}
+                    for row in result]
+        return self.seek_frame('tafsir header ' + book + ' ' + key, match, up=False)
 
     def click(self, query, up=True, exact=True, limit=70, scroll_step=250):
         node = self.seek(query, up=up, exact=exact, limit=limit, scroll_step=scroll_step)
@@ -444,16 +623,18 @@ class ReaderChecks:
     def selected(self, author):
         node = self.seek('اختيار تفسير ' + author, up=False, exact=True)
         require(node.get('selected') == 'true', 'Wrong selected author: ' + author)
+        require(node.get('enabled') == 'true' and node.get('clickable') == 'true',
+                'Selected author lacks enabled CLICK: ' + author)
 
-    def verify_content(self, expected, frame_limit=100):
-        traversal = TextTraversal(expected, frame_limit)
+    def verify_content(self, expected, frame_limit=100, allowed=None, ltr=False):
+        traversal = TextTraversal(expected, frame_limit, allowed, ltr)
+        progress = ScrollProgress()
         loading_deadline = None
         for _ in range(frame_limit):
             root = self.dump()
-            labels = [self.d.label(n) for n in root.iter('node') if self.d.label(n)
-                      and self.d.bounds(n)[2] > self.d.bounds(n)[0]
-                      and self.d.bounds(n)[3] > self.d.bounds(n)[1]]
-            if traversal.observe(labels):
+            rows = self.visible_rows(root)
+            labels = [raw for _, _, raw in rows]
+            if traversal.observe(labels, [i for i, _, _ in rows], state=self.state_count):
                 return traversal.finish()
             if traversal.loading:
                 if loading_deadline is None:
@@ -462,6 +643,8 @@ class ReaderChecks:
                 time.sleep(.2)
                 continue
             loading_deadline = None
+            progress.observe((traversal.position, tuple((self.d.label(n), n.get('bounds'))
+                                                       for n in root.iter('node'))), self.scroll_raster)
             scrolls = [n for n in root.iter('node') if n.get('scrollable') == 'true'
                        and self.d.bounds(n)[3] - self.d.bounds(n)[1] > 120]
             require(scrolls, 'No scroll owner while verifying exact source contents')
@@ -477,17 +660,20 @@ class ReaderChecks:
 
     def ready_tafsir(self, book, key, full=True):
         content = self.tafsir.content(book, key, full)
-        self.seek('تفسير الآية ' + key, up=False, exact=True)
-        self.seek(BOOK_TITLES[book], up=False, exact=True)
-        observed = self.verify_content(content.pop('expected'))
-        return {**content, **observed}
+        header = self.header(book, key)
+        allowed = [line for line in self.tafsir.entry(book, key)['display'].split('\n') if line]
+        allowed.append('نهاية تفسير الآية ' + key)
+        observed = self.verify_content(content.pop('expected'), allowed=allowed)
+        return {**content, **observed, 'header_matches': header}
 
     def source_notices(self):
         expected = [text for notice in self.tafsir.notices for text in (notice['title'], notice['text'])]
-        observed = self.verify_content(expected, frame_limit=160)
+        observed = self.verify_content(expected, frame_limit=160,
+                                       allowed=[self.tafsir.source_summary, 'المصدر والترخيص'] + expected, ltr=True)
         self.capture('source-loaded-' + str(self.state_count), png=False)
         return {'scope': 'all-four-exact-notice-semantic-bodies-in-source-order',
                 'owner_sha256': self.tafsir.notice_owner_sha256,
+                'view_owner_sha256': self.tafsir.notice_view_sha256,
                 'notices': [{k: notice[k] for k in ('file', 'sha256')} for notice in self.tafsir.notices],
                 **observed}
 
@@ -535,6 +721,20 @@ class ReaderChecks:
         self.canonical = {f"{r['surah']}:{r['ayah']}": r['unicode'] for r in json.loads(canonical)['ayahs']}
         require(len(self.canonical) == 6236, 'Missing canonical Quran identities')
         self.report['canonical_sha256'] = digest(canonical)
+        metadata = Path('.local/reader/metadata.json').read_bytes()
+        metadata_owner = Path('lib/reader_metadata.dart').read_text()
+        pins = re.findall(r"static const _sha256 =\s*'([a-f0-9]{64})';", metadata_owner)
+        require(len(pins) == 1 and digest(metadata) == pins[0], 'Unauthenticated chapter metadata')
+        chapters = json.loads(metadata)['surahs']
+        require(len(chapters) == 114, 'Missing chapter metadata')
+        counts = {}
+        for key in self.canonical:
+            surah = key.split(':')[0]
+            counts[surah] = counts.get(surah, 0) + 1
+        self.references = {key: chapters[int(key.split(':')[0]) - 1]['english'].upper() + ' ' +
+                           key.split(':')[1] + '/' + str(counts[key.split(':')[0]])
+                           for key in self.canonical}
+        self.report['chapter_metadata_sha256'] = digest(metadata)
         self.tafsir = TafsirExpectations()
         self.report['tafsir_expectation_pack_sha256'] = self.tafsir.pack_sha256
         self.report['notice_expectation_owner_sha256'] = self.tafsir.notice_owner_sha256
@@ -562,17 +762,14 @@ class ReaderChecks:
         for book, author in AUTHORS:
             self.click('اختيار تفسير ' + author, up=False)
             self.selected(author)
-            self.seek('تفسير الآية 27:59', up=False, exact=True)
-            self.seek('THE ANT 59/93', up=False, exact=True)
             content = self.ready_tafsir(book, '27:59')
-            self.seek(BOOK_TITLES[book], up=False, exact=True)
+            self.header(book, '27:59')
             self.capture('tafsir-27-59-' + book)
             self.click('المصدر والترخيص', up=False)
             notices = self.source_notices()
             self.capture('source-' + book, png=False)
             self.click('العودة إلى التفسير', up=False, limit=160, scroll_step=900)
             self.selected(author)
-            self.seek('تفسير الآية 27:59', up=False, exact=True)
             returned = self.ready_tafsir(book, '27:59', full=False)
             results.append({'book': book, 'key': '27:59', 'content': content, 'notices': notices,
                             'returned_content': returned, 'selected_after_source_return': True})
@@ -595,18 +792,19 @@ class ReaderChecks:
             self.click('فتح التفسير')
             self.click('اختيار تفسير الطبري', up=False)
             self.selected('الطبري')
-            self.seek('تفسير الآية ' + key, up=False, exact=True)
-            self.seek('لا يوجد نص تفسير مستقل لهذه الآية في سجل المصدر المحدد.', exact=True)
+            empty = 'لا يوجد نص تفسير مستقل لهذه الآية في سجل المصدر المحدد.'
+            self.header('al_tabari', key, suffix=(empty,))
+            self.seek_metadata(empty)
             self.click('فتح السياق المحيط ' + span)
-            self.seek('السياق المحيط ' + span, exact=True)
-            self.seek('الآية المختارة ' + key + ' — الطبري', exact=True)
-            self.seek(f'عنوان المقطع في سجل المصدر {s}:{row["heading"]}', exact=True)
-            self.seek('سجلات المصدر بالترتيب؛ هذا سياق محيط وليس تفسيراً مستقلاً بديلاً للآية المختارة.', exact=True)
+            self.seek_metadata('السياق المحيط ' + span)
+            self.seek_metadata('الآية المختارة ' + key + ' — الطبري')
+            self.seek_metadata(f'عنوان المقطع في سجل المصدر {s}:{row["heading"]}')
+            self.seek_metadata('سجلات المصدر بالترتيب؛ هذا سياق محيط وليس تفسيراً مستقلاً بديلاً للآية المختارة.')
             for source in row['source_rows']:
-                self.seek(f'سجل المصدر {s}:{source["ayah"]} — الطبري', exact=True)
-            self.seek('نهاية السياق ' + span, exact=True)
+                self.seek_metadata(f'سجل المصدر {s}:{source["ayah"]} — الطبري')
+            self.seek_metadata('نهاية السياق ' + span)
             self.capture('context-' + key.replace(':', '-'), png=False)
-            self.seek('نهاية تفسير الآية ' + key, exact=True)
+            self.seek_metadata('نهاية تفسير الآية ' + key)
             self.back()
             self.reader(key)
             results.append({'selected': key, 'range': span, 'source_rows': [r['ayah'] for r in row['source_rows']]})
@@ -812,7 +1010,7 @@ class ReaderChecks:
             self.click('اختيار تفسير ' + author, up=False)
             self.selected(author)
             contents.append(self.ready_tafsir(book, '2:282', full=False))
-        self.seek('نهاية تفسير الآية 2:282')  # Saadi endpoint; prose scope above is sampled.
+        self.seek_metadata('نهاية تفسير الآية 2:282')  # Saadi endpoint; prose scope above is sampled.
         self.capture(name + '-tafsir-end')
         self.click('المصدر والترخيص')
         notices = self.source_notices()
