@@ -27,6 +27,7 @@ AUTHORS = [('ibn_kathir', 'ابن كثير'), ('al_tabari', 'الطبري'), ('a
 BOOK_TITLES = {'ibn_kathir': 'تفسير القرآن العظيم', 'al_tabari': 'جامع البيان عن تأويل آي القرآن',
                'al_saadi': 'تيسير الكريم الرحمن في تفسير كلام المنان'}
 SETTINGS = [('system', k) for k in ('font_scale', 'user_rotation', 'accelerometer_rotation')]
+SCROLL_STRIDE_CAP_PX = 900
 REQUIRED = (
     'offline-startup', 'three-author-27:59-source-return', 'seven-tabari-contexts',
     'boundaries', 'clipboard-2:281', 'clipboard-2:282', 'share-27:59',
@@ -506,6 +507,7 @@ class ReaderChecks:
         root = self.raw_dump(name)
         self.state_count += 1
         self.trace.write(json.dumps({'state': self.state_count, 'monotonic': time.monotonic(),
+                                     'stage': getattr(self, 'stage', 'unassigned'),
                                      'xml': ET.tostring(root, encoding='unicode')}, ensure_ascii=False) + '\n')
         self.trace.flush()
         return root
@@ -517,24 +519,72 @@ class ReaderChecks:
                 self.adb + ['exec-out', 'screencap', '-p'], timeout=35))
         return root
 
+    def visible_nodes(self, root):
+        # A positive node rectangle can still be outside its scroll owner.
+        # Intersect every Android ancestor; never count cached offscreen text
+        # or swipe through a viewport belonging to an offscreen scroll node.
+        parents = {child: parent for parent in root.iter() for child in parent}
+        rows = []
+        for i, node in enumerate(root.iter('node')):
+            l, t, r, b = self.d.bounds(node)
+            parent = parents.get(node)
+            while parent is not None:
+                if parent.tag == 'node':
+                    pl, pt, pr, pb = self.d.bounds(parent)
+                    l, t, r, b = max(l, pl), max(t, pt), min(r, pr), min(b, pb)
+                parent = parents.get(parent)
+            if r > l and b > t:
+                rows.append((i, node, (l, t, r, b)))
+        return rows
+
     def visible_rows(self, root):
-        return [(i, n, self.d.label(n)) for i, n in enumerate(root.iter('node'))
-                if self.d.label(n) and self.d.bounds(n)[2] > self.d.bounds(n)[0]
-                and self.d.bounds(n)[3] > self.d.bounds(n)[1]]
+        return [(i, n, self.d.label(n)) for i, n, _ in self.visible_nodes(root) if self.d.label(n)]
 
     def scroll_raster(self):
         return digest(subprocess.check_output(self.adb + ['exec-out', 'screencap', '-p'], timeout=35))
 
-    def seek_frame(self, query, match, up=True, limit=70, scroll_step=250):
+    def scroll(self, root, up=True, remaining_px=math.inf):
+        """One target/content traversal stride in the current scroll viewport.
+
+        Use the source-body traversal's 40% stride (at least 60% overlap),
+        capped at 900 physical pixels. Recompute for every frame, including
+        reverse returns and rotated/large-text windows; no key-specific steps.
+        This is commanded distance, not a measurement of Android displacement.
+        Only the final budget-limited gesture may be shorter than that stride.
+        """
+        scrolls = [(n, box) for _, n, box in self.visible_nodes(root) if n.get('scrollable') == 'true'
+                   and box[3] - box[1] > 120]
+        require(scrolls, 'No active scroll owner during reader traversal')
+        _, (l, t, r, b) = max(scrolls, key=lambda row: (row[1][2] - row[1][0]) * (row[1][3] - row[1][1]))
+        distance = int(min(SCROLL_STRIDE_CAP_PX, (b - t) * .4, remaining_px))
+        require(distance >= 1, 'Scroll distance budget exhausted')
+        middle = (b + t) / 2
+        low, high = int(middle + distance / 2), int(middle - distance / 2)
+        start, end = (low, high) if up else (high, low)
+        self.d.sh('input', 'swipe', (l + r) // 2, start, (l + r) // 2, end, 450)
+        time.sleep(.15)
+        return {'viewport': [l, t, r, b], 'up': up, 'from_y': start, 'to_y': end,
+                'commanded_distance_px': abs(start - end), 'duration_ms': 450}
+
+    def seek_frame(self, query, match, up=True, limit=70):
+        # Helper-compatible `limit` now bounds commanded travel in full stride
+        # equivalents at 1x, not gesture count. Thus a short landscape viewport
+        # does not silently shrink route coverage. Scale the coverage allowance
+        # by the read-back font scale squared: both wrapping and line pitch can
+        # grow. This is a conservative policy allowance, not a rendered-height
+        # prediction (Android's font scaling is nonlinear). Default at 1x:
+        # 70 * 900 = 63,000px; existing source-return limit160: 144,000px.
+        # Loading has its own deadline and the whole run retains 40 minutes.
+        require(limit > 0, 'Expected positive target traversal coverage budget')
+        text_scale = getattr(self, 'text_scale', 1.0)
+        distance_budget = limit * SCROLL_STRIDE_CAP_PX * max(1, text_scale ** 2)
+        travelled = 0
         gestures, progress = [], ScrollProgress()
         loading_deadline = None
-        reason = 'gesture budget exhausted'
-        for attempt in range(limit + 1):
+        reason = 'commanded scroll distance budget exhausted'
+        while True:
             root = self.dump()
             rows = self.visible_rows(root)
-            result = match(rows)
-            if result is not None:
-                return result
             labels = [raw for _, _, raw in rows]
             require(not any(text.startswith(('تعذّر', 'لم يُعثر')) or text == 'إعادة المحاولة'
                             for text in labels), 'Content UI reported an error while seeking ' + query)
@@ -545,6 +595,9 @@ class ReaderChecks:
                 time.sleep(.2)
                 continue
             loading_deadline = None
+            result = match(rows)
+            if result is not None:
+                return result
             state = tuple((self.d.label(n), n.get('bounds'), n.get('scrollable'), n.get('enabled'),
                            n.get('selected'), n.get('clickable')) for n in root.iter('node'))
             try:
@@ -552,25 +605,18 @@ class ReaderChecks:
             except AssertionError as error:
                 reason = str(error)
                 break
-            if attempt == limit:
+            if distance_budget - travelled < 1:
                 break
-            scrolls = [n for n in root.iter('node') if n.get('scrollable') == 'true'
-                       and self.d.bounds(n)[3] - self.d.bounds(n)[1] > 120]
-            require(scrolls, 'No active scroll owner while seeking ' + query)
-            owner = max(scrolls, key=lambda n: (self.d.bounds(n)[2] - self.d.bounds(n)[0]) *
-                        (self.d.bounds(n)[3] - self.d.bounds(n)[1]))
-            l, t, r, b = self.d.bounds(owner)
-            distance = min(scroll_step, (b - t) * .4)
-            middle = (b + t) / 2
-            low, high = int(middle + distance / 2), int(middle - distance / 2)
-            gestures.append([l, t, r, b, up])
-            self.d.sh('input', 'swipe', (l + r) // 2, low if up else high,
-                      (l + r) // 2, high if up else low, 450)
-            time.sleep(.15)
-        (OUT / 'unreachable.json').write_text(json.dumps({'query': query, 'reason': reason, 'gestures': gestures}))
+            gesture = self.scroll(root, up, distance_budget - travelled)
+            gestures.append(gesture)
+            travelled += gesture['commanded_distance_px']
+        (OUT / 'unreachable.json').write_text(json.dumps({'query': query, 'reason': reason, 'gestures': gestures,
+            'commanded_distance_px': travelled, 'distance_budget_px': distance_budget,
+            'text_scale': text_scale,
+            'budget_unit': 'physical-pixels-commanded-not-observed-displacement'}))
         raise AssertionError('Required UI target unreachable: ' + query + ': ' + reason)
 
-    def seek(self, query, up=True, exact=False, limit=70, scroll_step=250):
+    def seek(self, query, up=True, exact=False, limit=70):
         # Exact controls retain whole-node authority. Never click a fragment
         # extracted from a composite header or an authenticated prose value.
         def match(rows):
@@ -578,7 +624,7 @@ class ReaderChecks:
             # Header/footer may expose the same real control twice. Each still
             # owns its complete exact label and actual bounds/action.
             return nodes[0] if nodes else None
-        return self.seek_frame(query, match, up, limit, scroll_step)
+        return self.seek_frame(query, match, up, limit)
 
     def seek_metadata(self, query, up=True):
         # Read-only metadata lines (context references/endpoints), explicitly
@@ -600,8 +646,8 @@ class ReaderChecks:
                     for row in result]
         return self.seek_frame('tafsir header ' + book + ' ' + key, match, up=False)
 
-    def click(self, query, up=True, exact=True, limit=70, scroll_step=250):
-        node = self.seek(query, up=up, exact=exact, limit=limit, scroll_step=scroll_step)
+    def click(self, query, up=True, exact=True, limit=70):
+        node = self.seek(query, up=up, exact=exact, limit=limit)
         require(node.get('enabled') == 'true' and node.get('clickable') == 'true',
                 'Control lacks an enabled CLICK action: ' + query)
         self.d.tap(node)
@@ -645,17 +691,8 @@ class ReaderChecks:
             loading_deadline = None
             progress.observe((traversal.position, tuple((self.d.label(n), n.get('bounds'))
                                                        for n in root.iter('node'))), self.scroll_raster)
-            scrolls = [n for n in root.iter('node') if n.get('scrollable') == 'true'
-                       and self.d.bounds(n)[3] - self.d.bounds(n)[1] > 120]
-            require(scrolls, 'No scroll owner while verifying exact source contents')
-            l, t, r, b = self.d.bounds(max(scrolls, key=lambda n: self.d.bounds(n)[3] - self.d.bounds(n)[1]))
-            # Overlap 60% of the actual viewport so complete semantic lines
-            # cannot be skipped, without hundreds of tiny source-page steps.
-            distance = min(900, (b - t) * .4)
-            middle = (b + t) / 2
-            self.d.sh('input', 'swipe', (l + r) // 2, int(middle + distance / 2),
-                      (l + r) // 2, int(middle - distance / 2), 450)
-            time.sleep(.15)
+            if traversal.frames < frame_limit:
+                self.scroll(root)
         traversal.finish()  # A budget, loading state or missing label never passes.
 
     def ready_tafsir(self, book, key, full=True):
@@ -678,10 +715,17 @@ class ReaderChecks:
                 **observed}
 
     def set_settings(self, scale, rotation):
+        actual_scale = None
         for key, value in [('accelerometer_rotation', '0'), ('user_rotation', str(rotation)), ('font_scale', str(scale))]:
             self.d.sh('settings', 'put', 'system', key, value)
-            require(float(self.d.sh('settings', 'get', 'system', key).strip()) == float(value),
+            actual = float(self.d.sh('settings', 'get', 'system', key).strip())
+            require(actual == float(value),
                     'Settings write did not take effect: ' + key)
+            if key == 'font_scale':
+                actual_scale = actual
+        require(actual_scale is not None and math.isfinite(actual_scale) and actual_scale > 0,
+                'Invalid read-back text scale')
+        self.text_scale = actual_scale
         time.sleep(.8)
 
     def verify_offline(self):
@@ -768,7 +812,7 @@ class ReaderChecks:
             self.click('المصدر والترخيص', up=False)
             notices = self.source_notices()
             self.capture('source-' + book, png=False)
-            self.click('العودة إلى التفسير', up=False, limit=160, scroll_step=900)
+            self.click('العودة إلى التفسير', up=False, limit=160)
             self.selected(author)
             returned = self.ready_tafsir(book, '27:59', full=False)
             results.append({'book': book, 'key': '27:59', 'content': content, 'notices': notices,
@@ -962,7 +1006,7 @@ class ReaderChecks:
         # to complete through the real native owner before process termination.
         self.click('المصدر والترخيص', up=False)
         notices = self.source_notices()
-        self.click('العودة إلى التفسير', up=False, limit=160, scroll_step=900)
+        self.click('العودة إلى التفسير', up=False, limit=160)
         self.selected('السعدي')
         returned = self.ready_tafsir('al_saadi', '27:59', full=False)
         self.back()
@@ -1014,7 +1058,7 @@ class ReaderChecks:
         self.capture(name + '-tafsir-end')
         self.click('المصدر والترخيص')
         notices = self.source_notices()
-        self.click('العودة إلى التفسير', up=False, limit=160, scroll_step=900)
+        self.click('العودة إلى التفسير', up=False, limit=160)
         self.selected('السعدي')
         returned = self.ready_tafsir('al_saadi', '2:282', full=False)
         self.click('العودة إلى القراءة')
@@ -1028,17 +1072,27 @@ class ReaderChecks:
 
     def run(self):
         try:
+            self.stage = 'prepare'
             self.prepare()
+            self.stage = 'authors'
             self.authors()
+            self.stage = 'contexts'
             self.contexts()
+            self.stage = 'boundaries-and-clipboard'
             self.boundaries_and_clipboard()
+            self.stage = 'share'
             self.share(27, 59)
             self.share(27, 59, repeat=True)
             long_png = self.share(2, 282)
+            self.stage = 'long-export'
             self.long_export(long_png)
+            self.stage = 'lifecycle'
             self.lifecycle()
+            self.stage = 'large-text-jump'
             self.jump(2, 282)
+            self.stage = 'portrait-2x'
             self.access(0, 'portrait-2x')
+            self.stage = 'landscape-2x'
             self.access(1, 'landscape-2x')
         except BaseException:
             self.report['errors'].append({'stage': 'reader', 'traceback': traceback.format_exc()})
