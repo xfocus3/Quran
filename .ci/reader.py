@@ -65,11 +65,12 @@ class TafsirExpectations:
     """
     # Source-format line identities from the pinned pack. Each bounded prefix
     # includes commentary beyond the source's Quran quote/heading. In particular
-    # Saadi 2:282 lines 0/1 alone are a heading and the ayah, not commentary.
+    # Saadi 2:282 lines 0/1 are heading/ayah; Tabari 2:282 line 2 is
+    # another heading. Ibn 27:59 line 1 is blank; commentary starts at 2.
     SAMPLES = {
-        ('ibn_kathir', '27:59'): (0, 1), ('al_tabari', '27:59'): (1, 2),
+        ('ibn_kathir', '27:59'): (0, 2), ('al_tabari', '27:59'): (1, 2),
         ('al_saadi', '27:59'): (0, 1),
-        ('ibn_kathir', '2:282'): (0, 2), ('al_tabari', '2:282'): (0, 2),
+        ('ibn_kathir', '2:282'): (0, 2), ('al_tabari', '2:282'): (0, 2, 3),
         ('al_saadi', '2:282'): (0, 1, 2),
     }
 
@@ -102,6 +103,34 @@ class TafsirExpectations:
         require(len(rows) == 1 and rows[0][1] == 'source_text', 'Expected one source-text tafsir entry')
         raw = rows[0][0]
         return {'raw_sha256': digest(raw.encode()), 'display': expected_tafsir_display(raw)}
+
+    def content(self, book, key, full=True):
+        """Select exact source identities for both device and real-pack checks.
+
+        Samples are explicit pinned source indices, never filtered/fallback lines.
+        A blank, missing or reordered sample is an invalid expectation, not a
+        candidate-content failure. Full traversal retains every nonempty line
+        and the endpoint; samples never imply full-entry coverage.
+        """
+        entry = self.entry(book, key)
+        lines = entry['display'].split('\n')
+        indices = [i for i, line in enumerate(lines) if line]
+        require(indices, 'No expected source prose')
+        selected = indices if full else list(self.SAMPLES[(book, key)])
+        if not full:
+            require(selected and all(type(i) is int and 0 <= i < len(lines) and lines[i].strip()
+                                     for i in selected) and selected == sorted(set(selected)),
+                    'Expected sample line identities changed: ' + book + ' ' + key)
+        expected = [lines[i] for i in selected]
+        if full:
+            expected.append('نهاية تفسير الآية ' + key)
+        require(len(set(expected)) == len(expected), 'Repeated text needs an unambiguous line-identity contract')
+        return {'book': book, 'key': key, 'pack_sha256': self.pack_sha256,
+                'raw_sha256': entry['raw_sha256'], 'display_sha256': digest(entry['display'].encode()),
+                'scope': 'all-nonempty-source-lines' if full else 'sampled-source-lines',
+                'source_line_count': len(lines), 'nonempty_line_count': len(indices),
+                'verified_line_indices': selected, 'blank_lines_without_semantic_labels': len(lines) - len(indices),
+                'expected': expected}
 
 
 class TextTraversal:
@@ -447,24 +476,11 @@ class ReaderChecks:
         traversal.finish()  # A budget, loading state or missing label never passes.
 
     def ready_tafsir(self, book, key, full=True):
+        content = self.tafsir.content(book, key, full)
         self.seek('تفسير الآية ' + key, up=False, exact=True)
         self.seek(BOOK_TITLES[book], up=False, exact=True)
-        entry = self.tafsir.entry(book, key)
-        lines = entry['display'].split('\n')
-        indices = [i for i, line in enumerate(lines) if line]
-        require(indices, 'No expected source prose')
-        selected = indices if full else list(self.tafsir.SAMPLES[(book, key)])
-        require(all(i in indices for i in selected), 'Expected sample line identities changed')
-        expected = [lines[i] for i in selected]
-        if full:
-            expected.append('نهاية تفسير الآية ' + key)
-        observed = self.verify_content(expected)
-        return {'book': book, 'key': key, 'pack_sha256': self.tafsir.pack_sha256,
-                'raw_sha256': entry['raw_sha256'], 'display_sha256': digest(entry['display'].encode()),
-                'scope': 'all-nonempty-source-lines' if full else 'sampled-source-lines',
-                'source_line_count': len(lines), 'nonempty_line_count': len(indices),
-                'verified_line_indices': selected, 'blank_lines_without_semantic_labels': len(lines) - len(indices),
-                **observed}
+        observed = self.verify_content(content.pop('expected'))
+        return {**content, **observed}
 
     def source_notices(self):
         expected = [text for notice in self.tafsir.notices for text in (notice['title'], notice['text'])]

@@ -29,30 +29,62 @@ class TafsirDisplayContract(unittest.TestCase):
         traversal = expectations.TextTraversal(notices)
         self.assertTrue(traversal.observe(notices))
         traversal.finish()
-        for (book, key), sample in owner.SAMPLES.items():
-            with self.subTest(book=book, key=key):
-                entry = owner.entry(book, key)
-                lines = entry['display'].split('\n')
-                expected = ([line for line in lines if line] + ['نهاية تفسير الآية ' + key]
-                            if key == '27:59' else [lines[i] for i in sample])
-                traversal = expectations.TextTraversal(expected)
-                self.assertTrue(traversal.observe(expected))
-                traversal.finish()
+        # Validate every declared sampled route before any negative assertion.
+        # Full 27:59 coverage must not hide a broken source-return sample.
+        self.assertEqual(set(owner.SAMPLES), {(book, key) for book in expectations.BOOK_TITLES
+                                            for key in ('27:59', '2:282')})
+        routes = []
+        for book, key in owner.SAMPLES:
+            entry = owner.entry(book, key)
+            lines = entry['display'].split('\n')
+            content = owner.content(book, key, full=False)
+            expected = content['expected']
+            self.assertEqual(content['scope'], 'sampled-source-lines')
+            self.assertEqual(content['verified_line_indices'], list(owner.SAMPLES[(book, key)]))
+            self.assertEqual(expected, [lines[i] for i in owner.SAMPLES[(book, key)]])
+            self.assertEqual(content['raw_sha256'], entry['raw_sha256'])
+            self.assertEqual(content['display_sha256'], expectations.digest(entry['display'].encode()))
+            traversal = expectations.TextTraversal(expected)
+            self.assertTrue(traversal.observe(lines), (book, key))
+            traversal.finish()
+            routes.append(content)
+        for book in expectations.BOOK_TITLES:
+            lines = owner.entry(book, '27:59')['display'].split('\n')
+            content = owner.content(book, '27:59')
+            expected = content['expected']
+            self.assertEqual(content['scope'], 'all-nonempty-source-lines')
+            self.assertEqual(content['verified_line_indices'], [i for i, line in enumerate(lines) if line])
+            self.assertEqual(expected, [line for line in lines if line] + ['نهاية تفسير الآية 27:59'])
+            traversal = expectations.TextTraversal(expected)
+            self.assertTrue(traversal.observe(lines + ['نهاية تفسير الآية 27:59']), book)
+            traversal.finish()
+            routes.append(content)
+        self.assertEqual(owner.entry('ibn_kathir', '27:59')['raw_sha256'],
+                         '37dab0df8828b6f5760eaeeb8b956f74cb5995c2917b64fff3bf665bba819d18')
+        for content in routes:
+            book, key, expected = content['book'], content['key'], content['expected']
+            with self.subTest(book=book, key=key, scope=content['scope']):
                 stale_key = '27:58' if key == '27:59' else '2:281'
                 for other_book, wrong_key in [(book, stale_key)] + [
                     (other, key) for other in expectations.BOOK_TITLES if other != book
                 ]:
                     wrong = owner.entry(other_book, wrong_key)['display'].split('\n')
                     # Correct title and key, actual authenticated but wrong body.
-                    with self.assertRaises(AssertionError):
-                        traversal = expectations.TextTraversal(expected)
+                    traversal = expectations.TextTraversal(expected)
+                    with self.assertRaisesRegex(AssertionError, 'incomplete|skipped|order differs'):
                         traversal.observe([expectations.BOOK_TITLES[book], 'تفسير الآية ' + key]
                                           + wrong + ['نهاية تفسير الآية ' + key])
                         traversal.finish()
                 # Only the source's quote/heading cannot pass as loaded prose.
-                with self.assertRaises(AssertionError):
-                    traversal = expectations.TextTraversal([lines[i] for i in sample])
-                    traversal.observe(lines[:sample[-1]])
+                lines = owner.entry(book, key)['display'].split('\n')
+                # Authenticated quote/heading boundaries checked against the
+                # pinned pack, independently of which anchors SAMPLES selects.
+                prose_start = {('ibn_kathir', '27:59'): 2, ('al_tabari', '27:59'): 2,
+                               ('al_saadi', '27:59'): 1, ('ibn_kathir', '2:282'): 2,
+                               ('al_tabari', '2:282'): 3, ('al_saadi', '2:282'): 2}
+                traversal = expectations.TextTraversal(expected)
+                with self.assertRaisesRegex(AssertionError, 'incomplete'):
+                    traversal.observe(lines[:prose_start[(book, key)]])
                     traversal.finish()
 
     def test_all_source_characters_breaks_and_context_rows(self):
